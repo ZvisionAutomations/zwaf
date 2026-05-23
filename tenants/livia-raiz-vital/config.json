@@ -1,0 +1,62 @@
+{
+  "tenant_id": "livia-raiz-vital",
+  "agent_name": "Lívia",
+  "brand_name": "Raiz Vital",
+  "language": "pt-BR",
+
+  "llm": {
+    "primary": "gpt-4o-mini",
+    "fallback": "gemini-1.5-flash",
+    "temperature": 0.7
+  },
+
+  "whatsapp": {
+    "evolution_api_url": "${EVOLUTION_API_URL}",
+    "evolution_api_key": "${EVOLUTION_API_KEY}",
+    "phone_numbers": [
+      {"number": "${WA_NUMBER_1}", "instance": "${WA_INSTANCE_1}"},
+      {"number": "${WA_NUMBER_2}", "instance": "${WA_INSTANCE_2}"}
+    ],
+    "warm_up_mode": true,
+    "warm_up_start_date": "${WA_WARMUP_START_DATE}",
+    "messages_per_minute": 10,
+    "typing_simulation": true
+  },
+
+  "payment": {
+    "provider": "abacate_pay",
+    "api_key": "${ABACATE_PAY_KEY}",
+    "webhook_secret": "${ABACATE_PAY_WEBHOOK_SECRET}",
+    "products": {
+      "new-woman": {"price_cents": 15000, "product_id": "nw-001"},
+      "alpha-pulse": {"price_cents": 15000, "product_id": "ap-001"}
+    }
+  },
+
+  "agents_enabled": ["vendedor", "recompra", "suporte", "cobranca", "fidelizacao"],
+
+  "router": {
+    "keywords": {
+      "vendedor": ["quero comprar", "quanto custa", "como funciona", "tem desconto", "valor", "preço"],
+      "recompra": ["quero pedir de novo", "acabou", "renovar", "segundo pote", "recompra"],
+      "suporte": ["não chegou", "problema", "dúvida", "como tomar", "efeito", "reação"],
+      "cobranca": ["pix", "boleto", "pagamento", "não consegui pagar", "link expirou"]
+    },
+    "fallback_llm": true
+  },
+
+  "fidelizacao": {
+    "trigger_days_after_purchase": 30,
+    "nps_enabled": true
+  },
+
+  "escalation": {
+    "phone": "+5511980142484",
+    "name": "Fernando"
+  },
+
+  "lgpd": {
+    "consent_required": true,
+    "data_retention_days": 730
+  }
+}

@@ -1,0 +1,121 @@
+version: "3.9"
+
+# Dev stack — inclui Prometheus + Grafana para observabilidade local
+# Para produção, use docker-compose.client.yml
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: zwaf
+      POSTGRES_PASSWORD: zwaf_dev
+      POSTGRES_DB: zwaf_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./infra/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zwaf -d zwaf_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  evolution-api:
+    image: atendai/evolution-api:latest
+    ports:
+      - "8080:8080"
+    environment:
+      SERVER_URL: http://localhost:8080
+      AUTHENTICATION_TYPE: apikey
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-dev_evolution_key}
+      DATABASE_ENABLED: "false"
+      REDIS_ENABLED: "true"
+      REDIS_URI: redis://redis:6379/1
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  zwaf-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DATABASE_URL: postgresql://zwaf:zwaf_dev@postgres:5432/zwaf_dev
+      REDIS_URL: redis://redis:6379/0
+      EVOLUTION_API_URL: http://evolution-api:8080
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-dev_evolution_key}
+      ZWAF_TENANTS: livia-raiz-vital
+      WA_NUMBER_1: ${WA_NUMBER_1:-5511999999999}
+      WA_INSTANCE_1: ${WA_INSTANCE_1:-livia-instance-1}
+      WA_NUMBER_2: ${WA_NUMBER_2:-5511999999998}
+      WA_INSTANCE_2: ${WA_INSTANCE_2:-livia-instance-2}
+      WA_WARMUP_START_DATE: ${WA_WARMUP_START_DATE:-2025-01-01}
+      ABACATE_PAY_KEY: ${ABACATE_PAY_KEY:-}
+      ESCALATION_PHONE: ${ESCALATION_PHONE:-5511980142484}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./tenants:/app/tenants:ro
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.99.0
+    ports:
+      - "4318:4318"   # OTLP HTTP
+      - "4317:4317"   # OTLP gRPC
+    volumes:
+      - ./infra/otel-collector.yml:/etc/otelcol-contrib/config.yaml:ro
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+  prometheus_data:
+  grafana_data:

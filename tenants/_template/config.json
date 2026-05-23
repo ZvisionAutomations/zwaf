@@ -1,0 +1,36 @@
+{
+  "_comment": "Copie esta pasta para tenants/{novo-tenant-id}/ e ajuste os valores. Remova _comment.",
+  "tenant_id": "TENANT_ID_AQUI",
+  "agent_name": "NOME_DO_AGENTE",
+  "brand_name": "NOME_DA_MARCA",
+  "llm": {
+    "default_model": "gpt-4o-mini",
+    "strong_model": "gpt-4o",
+    "temperature": 0.7
+  },
+  "whatsapp": {
+    "phone_numbers": [
+      {"number": "${WA_NUMBER_1}", "instance": "${WA_INSTANCE_1}"}
+    ],
+    "evolution_api_url": "${EVOLUTION_API_URL}",
+    "evolution_api_key": "${EVOLUTION_API_KEY}",
+    "messages_per_minute": 12,
+    "warm_up_mode": false,
+    "warm_up_start_date": null
+  },
+  "router": {
+    "keywords": {
+      "recompra": ["pedir de novo", "comprar de novo", "renovar", "recompra", "repor", "mais um"],
+      "suporte": ["problema", "não chegou", "defeito", "reclamação", "reembolso", "cancelar", "devolução", "rastrear", "prazo"],
+      "cobranca": ["pix", "boleto", "pagamento", "pagar", "não consigo pagar", "link expirou", "link não funciona"],
+      "vendedor": ["quero comprar", "quero adquirir", "me interessa", "como funciona", "qual o preço", "valor"]
+    },
+    "default_agent": "vendedor"
+  },
+  "escalation": {
+    "phone": "${ESCALATION_PHONE}",
+    "name": "Responsável"
+  },
+  "database_url": "${DATABASE_URL}",
+  "redis_url": "${REDIS_URL}"
+}

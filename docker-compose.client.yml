@@ -1,0 +1,104 @@
+# docker-compose.client.yml — Stack mínima para deploy no cliente
+# Stack: postgres + redis + evolution_api + zwaf_api
+# SEM: prometheus, grafana (observabilidade fica no Langfuse cloud)
+#
+# Deploy:
+#   docker compose -f docker-compose.client.yml --env-file .env.livia-raiz-vital up -d
+
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - ${ZWAF_TENANTS:-livia-raiz-vital}-postgres-data:/var/lib/postgresql/data
+      - ./infra/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - ${ZWAF_TENANTS:-livia-raiz-vital}-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  evolution-api:
+    image: atendai/evolution-api:latest
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8080
+      AUTHENTICATION_TYPE: apikey
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}
+      DATABASE_ENABLED: true
+      DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=evolution
+    volumes:
+      - ${ZWAF_TENANTS:-livia-raiz-vital}-evolution-data:/evolution/instances
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  zwaf-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      ENV: production
+      ZWAF_TENANTS: ${ZWAF_TENANTS}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      EVOLUTION_API_URL: http://evolution-api:8080
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
+      WA_NUMBER_1: ${WA_NUMBER_1}
+      WA_INSTANCE_1: ${WA_INSTANCE_1}
+      WA_NUMBER_2: ${WA_NUMBER_2:-}
+      WA_INSTANCE_2: ${WA_INSTANCE_2:-}
+      WA_WARMUP_START_DATE: ${WA_WARMUP_START_DATE}
+      ABACATE_PAY_KEY: ${ABACATE_PAY_KEY}
+      ABACATE_PAY_WEBHOOK_SECRET: ${ABACATE_PAY_WEBHOOK_SECRET}
+      ESCALATION_PHONE: ${ESCALATION_PHONE}
+      ZWAF_API_KEYS: ${ZWAF_API_KEYS}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      evolution-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  livia-raiz-vital-postgres-data:
+  livia-raiz-vital-redis-data:
+  livia-raiz-vital-evolution-data:
