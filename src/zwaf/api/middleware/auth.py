@@ -9,23 +9,34 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 _API_KEYS = set(filter(None, os.getenv("ZWAF_API_KEYS", "").split(",")))
 
-# Rotas públicas que não precisam de autenticação
+# Rotas publicas que nao precisam de autenticacao
 _PUBLIC_PATHS = {"/health", "/metrics", "/docs", "/redoc", "/openapi.json"}
+
+# Prefixos publicos — webhooks sao protegidos pela rede interna (Evolution API)
+# e por HMAC (Abacate Pay), nao por API key
+_PUBLIC_PREFIXES = ("/docs", "/redoc", "/v1/webhook/")
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
 
-        # Rotas públicas: sem auth
-        if path in _PUBLIC_PATHS or path.startswith("/docs") or path.startswith("/redoc"):
+        # Rotas publicas: sem auth
+        if path in _PUBLIC_PATHS:
+            return await call_next(request)
+
+        # Prefixos publicos (inclui todos os webhooks)
+        if any(path.startswith(prefix) for prefix in _PUBLIC_PREFIXES):
             return await call_next(request)
 
         # Sem chaves configuradas: aceita tudo (dev mode)
         if not _API_KEYS:
             return await call_next(request)
 
-        api_key = request.headers.get("X-API-Key") or request.headers.get("Authorization", "").removeprefix("Bearer ")
+        api_key = (
+            request.headers.get("X-API-Key")
+            or request.headers.get("Authorization", "").removeprefix("Bearer ")
+        )
 
         if not api_key or api_key not in _API_KEYS:
             return JSONResponse(
