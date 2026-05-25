@@ -1,77 +1,78 @@
-# New Woman — Ficha Técnica
+# New Woman — Ficha Tecnica
 
-## Visão Geral
+## Visao Geral
 
-**Nome comercial:** New Woman  
-**Categoria:** Suplemento feminino para equilíbrio hormonal e bem-estar  
-**Formato:** Cápsulas (30 cápsulas por frasco — suprimento para 30 dias)  
-**Público-alvo:** Mulheres a partir de 25 anos  
-**Preço:** R$ 197,00 (avulso) | R$ 167,45/mês (assinatura trimestral)
-
----
-
-## Benefícios Principais
-
-- Equilíbrio hormonal natural — suporte ao ciclo menstrual
-- Redução de sintomas de TPM (tensão pré-menstrual)
-- Energia e disposição ao longo do dia
-- Melhora do sono e redução da ansiedade
-- Suporte à saúde da pele, cabelos e unhas
-- Fórmula sem hormônios sintéticos — ação 100% natural
+**Nome comercial:** New Woman
+**Categoria:** Suplemento feminino para equilibrio hormonal e bem-estar
+**Formato:** Capsulas (30 capsulas por frasco — suprimento para 30 dias)
+**Publico-alvo:** Mulheres a partir de 25 anos
+**Preco:** R$ 150,00
 
 ---
 
-## Composição (por cápsula)
+## Beneficios Principais
 
-| Ingrediente | Quantidade | Função |
+- Equilibrio hormonal natural — suporte ao ciclo menstrual
+- Reducao de sintomas de TPM (tensao pre-menstrual)
+- Energia e disposicao ao longo do dia
+- Melhora do sono e reducao da ansiedade
+- Suporte a saude da pele, cabelos e unhas
+- Formula sem hormonios sinteticos — acao 100% natural
+
+---
+
+## Composicao (por capsula)
+
+| Ingrediente | Quantidade | Funcao |
 |-------------|------------|--------|
-| Extrato de Vitex Agnus-Castus (fruto) | 200mg | Regulação do ciclo menstrual, redução da TPM |
-| Óleo de Prímula (GLA 10%) | 500mg | Anti-inflamatório, suporte hormonal |
-| Ashwagandha KSM-66® | 300mg | Adaptógeno, redução do cortisol/ansiedade |
-| Magnésio Bisglicinato | 150mg | Qualidade do sono, TPM |
+| Extrato de Vitex Agnus-Castus (fruto) | 200mg | Regulacao do ciclo menstrual, reducao da TPM |
+| Oleo de Primula (GLA 10%) | 500mg | Anti-inflamatorio, suporte hormonal |
+| Ashwagandha KSM-66® | 300mg | Adaptogeno, reducao do cortisol/ansiedade |
+| Magnesio Bisglicinato | 150mg | Qualidade do sono, TPM |
 | Zinco Quelado | 15mg | Imunidade, pele, cabelo, fertilidade |
 | Vitamina B6 (P-5-P) | 25mg | Metabolismo hormonal, humor |
-| Ácido Fólico (5-MTHF) | 400mcg | Saúde reprodutiva |
+| Acido Folico (5-MTHF) | 400mcg | Saude reprodutiva |
 
 ---
 
 ## Modo de Uso
 
-- **Dose:** 1 cápsula ao dia com uma refeição
-- **Horário recomendado:** Manhã ou almoço
-- **Ciclo mínimo:** 60 dias para resultados completos
+- **Dose:** 1 capsula ao dia com uma refeicao
+- **Horario recomendado:** Manha ou almoco
+- **Ciclo minimo:** 60 dias para resultados completos
 - **Armazenamento:** Lugar seco, fresco, longe da luz solar
 
 ---
 
-## Informações Regulatórias
+## Informacoes Regulatorias
 
 - Registro ANVISA: em processo (notificado)
 - Fabricado em planta GMP certificada
-- Sem glúten | Sem lactose | Sem corantes artificiais
+- Sem gluten | Sem lactose | Sem corantes artificiais
 - Vegano
 
 ---
 
-## Política Comercial
+## Politica Comercial
 
-- **Entrega:** 5 a 10 dias úteis (SEDEX para capitais: 3-5 dias)
-- **Garantia:** 30 dias após recebimento — devolução sem burocracia
-- **Desconto:** Sem desconto sem aprovação do Fernando
-- **Parcelamento:** Até 3x sem juros no cartão | PIX à vista
+- **Preco:** R$ 150,00
+- **Entrega:** 5 a 10 dias uteis (SEDEX para capitais: 3-5 dias)
+- **Garantia:** 30 dias apos recebimento — devolucao sem burocracia
+- **Desconto:** Sem desconto sem aprovacao do Fernando
+- **Parcelamento:** Ate 3x sem juros no cartao | PIX a vista
 
 ---
 
-## Perguntas Frequentes (para uso da Lívia)
+## Perguntas Frequentes (para uso da Livia)
 
-**Q: New Woman tem contraindicação?**
-R: Grávidas e lactantes devem consultar médico antes. Não recomendado com anticoagulantes (Vitex).
+**Q: New Woman tem contraindicacao?**
+R: Gravidas e lactantes devem consultar medico antes. Nao recomendado com anticoagulantes (Vitex).
 
 **Q: Posso tomar junto com outros suplementos?**
-R: Sim, é compatível com whey, multivitamínico e ômega-3. Evitar junto a hormônios prescritos sem orientação médica.
+R: Sim, e compativel com whey, multivitaminico e omega-3. Evitar junto a hormonios prescritos sem orientacao medica.
 
 **Q: Em quanto tempo sinto resultado?**
-R: Melhora de energia em 2-3 semanas; equilíbrio hormonal completo em 2-3 ciclos menstruais.
+R: Melhora de energia em 2-3 semanas; equilibrio hormonal completo em 2-3 ciclos menstruais.
 
-**Q: Qual a diferença para outros produtos do mercado?**
-R: New Woman usa Vitex de alta concentração + Ashwagandha KSM-66® (patenteada) — combinação de eficácia comprovada em estudos clínicos.
+**Q: Qual a diferenca para outros produtos do mercado?**
+R: New Woman usa Vitex de alta concentracao + Ashwagandha KSM-66® (patenteada) — combinacao de eficacia comprovada em estudos clinicos.
