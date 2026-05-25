@@ -5,6 +5,8 @@ from agno.agent import Agent
 
 from zwaf.core.base_agent import build_agent
 from zwaf.core.tenant import TenantConfig
+from zwaf.tools.catalog import make_catalog_search
+from zwaf.tools.payment import make_payment_link_generator
 from zwaf.tools.whatsapp import WhatsAppTool
 
 
@@ -16,16 +18,15 @@ def build_recompra_agent(
     db_url: str = "",
 ) -> Agent:
     """
-    Recompra: reconhece cliente ativo, gera link de recompra rápido,
+    Recompra: reconhece cliente ativo, gera link de recompra rapido,
     aplica desconto de fidelidade se configurado, registra novo pedido.
-    Meta: link de pagamento enviado em ≤3 turnos.
+    Meta: link de pagamento enviado em <=3 turnos.
     """
-    from zwaf.tools.payment import generate_payment_link
-
     tools = [
         whatsapp_tool.send_message,
         whatsapp_tool._set_typing,
-        generate_payment_link,
+        make_catalog_search(tenant_config.tenant_id),
+        make_payment_link_generator(tenant_config.tenant_id, tenant_config.payment),
     ]
 
     return build_agent(
