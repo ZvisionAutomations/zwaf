@@ -1,10 +1,12 @@
-"""SuporteAgent — dúvidas, problemas, consulta de status de pedido."""
+"""SuporteAgent — duvidas, problemas, consulta de status de pedido."""
 from __future__ import annotations
 
 from agno.agent import Agent
 
 from zwaf.core.base_agent import build_agent
 from zwaf.core.tenant import TenantConfig
+from zwaf.tools.catalog import make_catalog_search
+from zwaf.tools.escalation import escalate_to_human
 from zwaf.tools.whatsapp import WhatsAppTool
 
 
@@ -16,18 +18,15 @@ def build_suporte_agent(
     db_url: str = "",
 ) -> Agent:
     """
-    Suporte: responde dúvidas com base na knowledge base (RAG),
+    Suporte: responde duvidas com base na knowledge base (RAG),
     consulta status de pedido, escala para humano em casos de:
-    - reembolso, reação adversa, defeito físico (direto para Fernando)
-    - solicitação explícita de humano (tenta resolver 1-2 turnos antes de escalar)
+    - reembolso, reacao adversa, defeito fisico (direto para Fernando)
+    - solicitacao explicita de humano (tenta resolver 1-2 turnos antes de escalar)
     """
-    from zwaf.tools.catalog import search_catalog
-    from zwaf.tools.escalation import escalate_to_human
-
     tools = [
         whatsapp_tool.send_message,
         whatsapp_tool._set_typing,
-        search_catalog,
+        make_catalog_search(tenant_config.tenant_id),
         escalate_to_human,
     ]
 
