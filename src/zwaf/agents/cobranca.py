@@ -1,10 +1,11 @@
-"""CobrancaAgent — pagamento pendente, geração de novo link."""
+"""CobrancaAgent — pagamento pendente, geracao de novo link."""
 from __future__ import annotations
 
 from agno.agent import Agent
 
 from zwaf.core.base_agent import build_agent
 from zwaf.core.tenant import TenantConfig
+from zwaf.tools.payment import make_payment_link_generator, make_payment_status_checker
 from zwaf.tools.whatsapp import WhatsAppTool
 
 
@@ -16,16 +17,14 @@ def build_cobranca_agent(
     db_url: str = "",
 ) -> Agent:
     """
-    Cobrança: identifica problema de pagamento, gera novo link Pix/boleto,
+    Cobranca: identifica problema de pagamento, gera novo link Pix/boleto,
     instrui cliente sobre como efetuar o pagamento, verifica status do pagamento.
     """
-    from zwaf.tools.payment import generate_payment_link, check_payment_status
-
     tools = [
         whatsapp_tool.send_message,
         whatsapp_tool._set_typing,
-        generate_payment_link,
-        check_payment_status,
+        make_payment_link_generator(tenant_config.tenant_id, tenant_config.payment),
+        make_payment_status_checker(),
     ]
 
     return build_agent(
