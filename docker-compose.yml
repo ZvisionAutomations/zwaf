@@ -34,16 +34,19 @@ services:
       retries: 5
 
   evolution-api:
-    image: atendai/evolution-api:latest
+    image: evoapicloud/evolution-api:v2.3.7
     ports:
       - "8080:8080"
     environment:
       SERVER_URL: http://localhost:8080
       AUTHENTICATION_TYPE: apikey
       AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-dev_evolution_key}
+      # Obrigatorio para v2.3.7 — sem isso WhatsApp nao conecta
+      CONFIG_SESSION_PHONE_VERSION: "2.3000.1035194821"
       DATABASE_ENABLED: "false"
       REDIS_ENABLED: "true"
       REDIS_URI: redis://redis:6379/1
+      WEBHOOK_GLOBAL_ENABLED: "false"
     depends_on:
       redis:
         condition: service_healthy
@@ -57,7 +60,7 @@ services:
       - "8000:8000"
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
-      DATABASE_URL: postgresql://zwaf:zwaf_dev@postgres:5432/zwaf_dev
+      DATABASE_URL: postgresql+asyncpg://zwaf:zwaf_dev@postgres:5432/zwaf_dev
       REDIS_URL: redis://redis:6379/0
       EVOLUTION_API_URL: http://evolution-api:8080
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-dev_evolution_key}
@@ -68,10 +71,10 @@ services:
       WA_INSTANCE_2: ${WA_INSTANCE_2:-livia-instance-2}
       WA_WARMUP_START_DATE: ${WA_WARMUP_START_DATE:-2025-01-01}
       ABACATE_PAY_KEY: ${ABACATE_PAY_KEY:-}
+      ABACATE_PAY_WEBHOOK_SECRET: ${ABACATE_PAY_WEBHOOK_SECRET:-}
       ESCALATION_PHONE: ${ESCALATION_PHONE:-5511980142484}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     depends_on:
       postgres:
         condition: service_healthy
@@ -109,8 +112,8 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.99.0
     ports:
-      - "4318:4318"   # OTLP HTTP
-      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"
+      - "4317:4317"
     volumes:
       - ./infra/otel-collector.yml:/etc/otelcol-contrib/config.yaml:ro
 
