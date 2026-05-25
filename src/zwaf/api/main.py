@@ -16,7 +16,7 @@ from slowapi.errors import RateLimitExceeded
 
 from zwaf.api.limiter import limiter
 from zwaf.api.middleware.auth import APIKeyMiddleware
-from zwaf.api.routes import health, webhook
+from zwaf.api.routes import health, webhook, payment_webhook
 from zwaf.core.team import build_team
 from zwaf.core.tenant import TenantConfig, TenantLoadError
 
@@ -27,7 +27,7 @@ _TENANTS_ROOT = Path(__file__).parent.parent.parent.parent / "tenants"
 
 
 def _discover_tenants() -> list[str]:
-    """Descobre tenant IDs no diretório tenants/ (qualquer pasta com config.json)."""
+    """Descobre tenant IDs no diretorio tenants/ (qualquer pasta com config.json)."""
     if not _TENANTS_ROOT.exists():
         return []
     return [
@@ -42,7 +42,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Startup: carrega todos os tenants e inicializa ZWAFTeams."""
     db_url = os.getenv("DATABASE_URL", "")
 
-    tenant_ids = os.getenv("ZWAF_TENANTS", "").split(",") if os.getenv("ZWAF_TENANTS") else _discover_tenants()
+    tenant_ids = (
+        os.getenv("ZWAF_TENANTS", "").split(",")
+        if os.getenv("ZWAF_TENANTS")
+        else _discover_tenants()
+    )
     tenant_ids = [t.strip() for t in tenant_ids if t.strip()]
 
     if not tenant_ids:
@@ -65,10 +69,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-    # Shutdown: parar schedulers de fidelização
+    # Shutdown: parar schedulers de fidelizacao
     for tenant_id, team in teams.items():
         try:
-            # FidelizacaoScheduler é opcional
             scheduler = getattr(team, "_fidelizacao_scheduler", None)
             if scheduler:
                 scheduler.stop()
@@ -110,6 +113,7 @@ app.add_middleware(
 
 app.include_router(health.router, tags=["System"])
 app.include_router(webhook.router, prefix="/v1/webhook", tags=["Webhook"])
+app.include_router(payment_webhook.router, prefix="/v1/webhook", tags=["Payments"])
 
 
 @app.exception_handler(Exception)
