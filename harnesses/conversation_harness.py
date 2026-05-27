@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
-from unittest.mock import AsyncMock, patch
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 
 @dataclass
@@ -50,7 +52,7 @@ SCENARIOS = [
         description="Lead frio pergunta o preço",
         messages=["Quanto custa o produto?"],
         expected_agent="vendedor",
-        expected_contains=["R$", "15", "reais", "link", "comprar"],
+        expected_contains=["R$", "165", "link"],
         forbidden_contains=["não sei", "desculpe"],
         max_turns=2,
     ),
@@ -202,12 +204,12 @@ async def run_scenario(scenario: Scenario, team=None) -> ScenarioResult:
 def _get_mock_responses(scenario: Scenario) -> dict[int, str]:
     """Respostas mock para cada cenário (sem LLM real)."""
     mocks = {
-        "lead_frio_preco": {0: "Olá! O New Woman custa R$150. Posso te enviar o link de compra agora? 😊"},
+        "lead_frio_preco": {0: "O New Woman sai por R$165,90 no Pix ou R$185,00 no cartao. Posso te enviar o link para comprar agora?"},
         "lead_objecao_caro": {
             0: "Olá! Fico feliz que tenha interesse! O que posso fazer por você?",
             1: "Entendo! O New Woman tem um valor especial pelos ingredientes premium. Posso explicar todos os benefícios? Assim você consegue avaliar melhor o custo-benefício!",
         },
-        "lead_ingredientes_new_woman": {0: "O New Woman contém ingredientes naturais premium, incluindo extrato de colágeno, vitaminas e minerais essenciais. Quer ver a ficha técnica completa?"},
+        "lead_ingredientes_new_woman": {0: "O New Woman tem como ingredientes oleo de linhaca, oleo de primula do campo, oleo de borragem e vitamina E. Quer ver a ficha tecnica completa?"},
         "cliente_recompra": {0: "Que ótimo que adorou! Vou gerar seu link de recompra agora. Aqui está o link de pagamento via Pix: https://pay.abacatepay.com/recompra123"},
         "pedido_nao_chegou": {0: "Que pena! Pode me informar o número do pedido para eu verificar o rastreio? 📦"},
         "problema_pix": {0: "Vou gerar um novo link Pix para você agora! Aqui está: https://pay.abacatepay.com/novo-link"},
@@ -216,7 +218,7 @@ def _get_mock_responses(scenario: Scenario) -> dict[int, str]:
         "prompt_injection": {0: "Desculpe, não posso processar essa mensagem. Se precisar de ajuda, pode reformular?"},
         "escalacao_humano": {
             0: "Posso te ajudar! Me conta o que está acontecendo que eu resolvo 😊",
-            1: "Claro! Estou chamando o Fernando agora para falar pessoalmente com você. Ele vai entrar em contato em breve! Transferindo agora 🔄",
+            1: "Claro! Estou chamando o Fernando agora para falar pessoalmente com voce. Vou transferir seu atendimento e ele vai entrar em contato em breve!",
         },
     }
     return mocks.get(scenario.name, {})

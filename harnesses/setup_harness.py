@@ -121,9 +121,10 @@ async def create_instance(instance_name: str, number: str) -> None:
             "qrcode": True,
             "integration": "WHATSAPP-BAILEYS",
             "webhook": {
+                "enabled": True,
                 "url": WEBHOOK_URL,
-                "byEvents": True,
-                "base64": False,
+                "webhookByEvents": False,
+                "webhookBase64": False,
                 "events": ["MESSAGES_UPSERT"],
             },
         }
@@ -157,9 +158,10 @@ async def configure_webhook() -> None:
             if not instance:
                 continue
             payload = {
+                "enabled": True,
                 "url": WEBHOOK_URL,
-                "byEvents": True,
-                "base64": False,
+                "webhookByEvents": False,
+                "webhookBase64": False,
                 "events": ["MESSAGES_UPSERT"],
             }
             r = await c.post(

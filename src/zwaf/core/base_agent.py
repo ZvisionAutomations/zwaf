@@ -1,24 +1,19 @@
-"""BaseWhatsAppAgent — base para todos os agentes especializados do ZWAF."""
+"""BaseWhatsAppAgent - base para todos os agentes especializados do ZWAF."""
 from __future__ import annotations
 
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
 try:
-    from agno.storage.agent.postgres import PostgresAgentStorage
+    from agno.db.postgres import AsyncPostgresDb
 except ImportError:
-    try:
-        from agno.storage.postgres import PostgresAgentStorage
-    except ImportError:
-        PostgresAgentStorage = None  # type: ignore
+    AsyncPostgresDb = None  # type: ignore
 
 from zwaf.core.tenant import TenantConfig
-from zwaf.tools.whatsapp import WhatsAppTool
 
 logger = logging.getLogger("zwaf.agents.base")
 
@@ -30,8 +25,8 @@ def _load_prompt(tenant_id: str, agent_name: str) -> str:
     prompt_path = _TENANTS_ROOT / tenant_id / "prompts" / f"{agent_name}.md"
     if prompt_path.exists():
         return prompt_path.read_text(encoding="utf-8")
-    logger.warning("Prompt file not found: %s — using default", prompt_path)
-    return f"Você é a {agent_name} da empresa. Ajude o cliente de forma cordial e eficiente."
+    logger.warning("Prompt file not found: %s - using default", prompt_path)
+    return f"Voce e a {agent_name} da empresa. Ajude o cliente de forma cordial e eficiente."
 
 
 def _make_llm(tenant_config: TenantConfig):
@@ -39,11 +34,9 @@ def _make_llm(tenant_config: TenantConfig):
     model_id = tenant_config.llm.primary
     temperature = tenant_config.llm.temperature
 
-    # OpenAI GPT (default) — outros providers expandíveis aqui
     if "gpt" in model_id or "openai" in model_id:
         return OpenAIChat(id=model_id, temperature=temperature)
 
-    # Gemini via OpenRouter
     if "gemini" in model_id:
         return OpenAIChat(
             id=f"google/{model_id}" if "/" not in model_id else model_id,
@@ -52,8 +45,23 @@ def _make_llm(tenant_config: TenantConfig):
             temperature=temperature,
         )
 
-    # Fallback: tenta como OpenAI-compatible
     return OpenAIChat(id=model_id, temperature=temperature)
+
+
+def _make_db(db_url: str, tenant_id: str, agent_name: str):
+    if not db_url or AsyncPostgresDb is None:
+        return None
+
+    agno_db_url = db_url.replace("+asyncpg", "+psycopg_async")
+    session_table = f"zwaf_{tenant_id.replace('-', '_')}_{agent_name}_sessions"
+    try:
+        return AsyncPostgresDb(
+            db_url=agno_db_url,
+            session_table=session_table,
+        )
+    except Exception as e:
+        logger.warning("Agno DB disabled for %s: %s", agent_name, e)
+        return None
 
 
 def build_agent(
@@ -70,25 +78,21 @@ def build_agent(
     """
     system_prompt = _load_prompt(tenant_config.tenant_id, agent_name)
     model = _make_llm(tenant_config)
+    db = _make_db(db_url, tenant_config.tenant_id, agent_name)
 
-    storage_kwargs = {}
-    if db_url and PostgresAgentStorage is not None:
-        storage_kwargs["storage"] = PostgresAgentStorage(
-            db_url=db_url,
-            table_name=f"zwaf_{tenant_config.tenant_id}_{agent_name}_sessions",
-        )
+    agent_kwargs = {
+        "name": f"{tenant_config.agent_name}_{agent_name}",
+        "model": model,
+        "instructions": system_prompt,
+        "tools": tools,
+        "session_id": session_id,
+        "user_id": lead_id,
+        "add_history_to_context": True,
+        "num_history_runs": 10,
+        "reasoning": False,
+        "markdown": False,
+    }
+    if db is not None:
+        agent_kwargs["db"] = db
 
-    return Agent(
-        name=f"{tenant_config.agent_name}_{agent_name}",
-        model=model,
-        instructions=system_prompt,
-        tools=tools,
-        session_id=session_id,
-        user_id=lead_id,
-        add_history_to_messages=True,
-        num_history_responses=10,
-        reasoning=False,  # Desabilitado para reduzir latência em B2C
-        markdown=False,
-        show_tool_calls=False,
-        **storage_kwargs,
-    )
+    return Agent(**agent_kwargs)
