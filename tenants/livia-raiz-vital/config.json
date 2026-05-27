@@ -14,9 +14,9 @@
     "evolution_api_url": "${EVOLUTION_API_URL}",
     "evolution_api_key": "${EVOLUTION_API_KEY}",
     "phone_numbers": [
-      {"number": "${WA_NUMBER_1}", "instance": "${WA_INSTANCE_1}"},
-      {"number": "${WA_NUMBER_2}", "instance": "${WA_INSTANCE_2}"}
+      {"number": "${WA_NUMBER_1}", "instance": "${WA_INSTANCE_1}"}
     ],
+    "_note": "Chip confirmado: +5511967318916. Expandir para mais chips quando disponíveis.",
     "warm_up_mode": true,
     "warm_up_start_date": "${WA_WARMUP_START_DATE}",
     "messages_per_minute": 10,
@@ -28,9 +28,20 @@
     "api_key": "${ABACATE_PAY_KEY}",
     "webhook_secret": "${ABACATE_PAY_WEBHOOK_SECRET}",
     "products": {
-      "new-woman": {"price_cents": 15000, "product_id": "nw-001"},
-      "alpha-pulse": {"price_cents": 15000, "product_id": "ap-001"}
-    }
+      "new-woman-1": {"qty": 1, "price_cents_card": 18500, "price_cents_pix": 16590, "product_id": "nw-001"},
+      "new-woman-2": {"qty": 2, "price_cents_card": 34790, "price_cents_pix": 33590, "product_id": "nw-002"},
+      "new-woman-3": {"qty": 3, "price_cents_card": 44890, "price_cents_pix": 42290, "product_id": "nw-003"},
+      "alpha-pulse-1": {"qty": 1, "price_cents_card": 18500, "price_cents_pix": 16590, "product_id": "ap-001"},
+      "alpha-pulse-2": {"qty": 2, "price_cents_card": 34790, "price_cents_pix": 33590, "product_id": "ap-002"},
+      "alpha-pulse-3": {"qty": 3, "price_cents_card": 44890, "price_cents_pix": 42290, "product_id": "ap-003"}
+    },
+    "free_shipping_above_cents": 30000,
+    "_status": "Conta Abacate Pay precisa ser criada por Fernando. product_ids são placeholders."
+  },
+
+  "inventory": {
+    "new-woman": {"initial_stock": 510},
+    "alpha-pulse": {"initial_stock": 275}
   },
 
   "agents_enabled": ["vendedor", "recompra", "suporte", "cobranca", "fidelizacao"],
@@ -46,13 +57,19 @@
   },
 
   "fidelizacao": {
-    "trigger_days_after_purchase": 30,
+    "steps": [
+      {"trigger": "product_received", "action": "ask_usage_doubts"},
+      {"trigger": "days_after_delivery", "days": 15, "action": "ask_improvements"},
+      {"trigger": "days_after_delivery", "days": 30, "action": "recompra_coupon_10pct"}
+    ],
     "nps_enabled": true
   },
 
   "escalation": {
     "phone": "+5511980142484",
-    "name": "Fernando"
+    "name": "Fernando",
+    "hours": "commercial_only",
+    "commercial_hours_brt": "08:00-18:00"
   },
 
   "lgpd": {

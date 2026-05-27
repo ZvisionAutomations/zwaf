@@ -2,81 +2,81 @@
 
 ## Visao Geral
 
-**Nome comercial:** Alpha Pulse
-**Categoria:** Suplemento masculino para energia, foco e performance
-**Formato:** Capsulas (60 capsulas por frasco — suprimento para 30 dias)
-**Publico-alvo:** Homens a partir de 20 anos
-**Preco:** R$ 150,00
+**Nome comercial:** AlphaPulse (Sabor Laranja)
+**Marca:** PIVATELLI Suplementos
+**Tipo:** Suplemento Alimentar Liquido — Solucao Oral
+**Formato:** Frasco 30mL — 30 porcoes de 1mL (17 gotas) cada
+**Publico-alvo:** Adultos. Produto e dosagem recomendada para adultos.
+**Restricao:** NAO pode ser consumido por gestantes, lactantes e criancas
 
 ---
 
-## Beneficios Principais
+## Composicao
 
-- Aumento de energia e resistencia fisica
-- Foco mental e clareza cognitiva
-- Suporte a testosterona natural (sem hormonios exogenos)
-- Reducao de fadiga e melhora da recuperacao muscular
-- Melhora da qualidade do sono profundo
-- Suporte cardiovascular e circulacao
+**Ingredientes:** Cloreto de magnesio, agua purificada, L-arginina, taurina, sulfato de zinco heptaidratado, cloridrato de piridoxina (Vitamina B6), agente de massa glicerina, aroma identico ao natural, conservantes benzoato de sodio e sorbato de potassio e edulcorante sucralose.
+
+**Alergenicos:** Pode conter leite, soja, pinoli (Pinus spp.) e crustaceos (caranguejo). NAO CONTEM GLUTEN.
 
 ---
 
-## Composicao (por dose = 2 capsulas)
+## Informacao Nutricional
 
-| Ingrediente | Quantidade | Funcao |
-|-------------|------------|--------|
-| Ashwagandha KSM-66® | 600mg | Adaptogeno, suporte a testosterona, reducao de cortisol |
-| Tribulus Terrestris (40% saponinas) | 750mg | Libido, vitalidade, suporte hormonal |
-| Maca Peruana (extrato 4:1) | 1000mg | Energia, fertilidade, adaptogeno |
-| Ginseng Siberiano (eleuthero) | 300mg | Performance fisica, imunidade |
-| Zinco Quelado | 25mg | Producao de testosterona, imunidade |
-| Vitamina D3 (K2) | 2000 UI / 90mcg | Saude ossea, suporte hormonal |
-| Selenio | 100mcg | Antioxidante, saude da tireoide |
-| Coenzima Q10 | 100mg | Energia celular, cardiovascular |
+Porcao: 1mL / 17 gotas
+
+| Nutriente | Por porcao | %VD |
+|-----------|-----------|-----|
+| Arginina | 50mg | - |
+| Vitamina B6 | 3mg | 230% |
+| Magnesio | 63mg | 15% |
+| Zinco | 1,7mg | 15% |
+| Taurina | 50mg | - |
+
+Nao contem quantidades significativas de valor energetico, carboidratos, acucares totais, acucares adicionados, proteinas, gorduras totais, gorduras saturadas, gorduras trans, fibras alimentares e sodio.
 
 ---
 
 ## Modo de Uso
 
-- **Dose:** 2 capsulas ao dia com uma refeicao
-- **Horario recomendado:** Cafe da manha (energia diurna) ou almoco
-- **Ciclo minimo:** 60 dias para resultados sustentados
-- **Armazenamento:** Lugar seco, fresco, longe da luz solar
+- **Dose:** 1mL (17 gotas) ao dia
+- **Duracao apos aberto:** 60 dias (frasco firmemente fechado)
+- **Conservacao:** Local fresco e seco (15-30 graus C), ao abrigo de luz, calor e umidade
 
 ---
 
 ## Informacoes Regulatorias
 
-- Registro ANVISA: em processo (notificado)
-- Fabricado em planta GMP certificada
-- Sem gluten | Sem lactose | Sem corantes artificiais
-- Vegano
+- **Registro ANVISA:** Alimento notificado — 25351063985202591
+- **NAO CONTEM GLUTEN**
+
+---
+
+## Fabricante e Distribuidor
+
+**Fabricado por:** WEVJ Industria de Suplementos LTDA
+CNPJ: 13.802.488/0001-12
+
+**Distribuido exclusivamente por:** PIVATELLI SUPLEMENTOS
+R. NATHANAEL TITO SALMON, 148, 2 andar sala 15, Centro — OSASCO/SP
+CNPJ: 61.455.826/0001-30
+Contato: (11) 9 8834-7270
+
+**Codigo de barras:** 7908946506613
+
+---
+
+## IMPORTANTE — Atendimento Alpha Pulse
+
+Alpha Pulse e voltado para publico masculino. Conforme briefing do cliente (Fernando Pivato), o atendimento do Alpha Pulse deve ser feito por um atendente masculino — NAO pela Livia. Este ponto depende de definicao futura de agente masculino pelo cliente.
 
 ---
 
 ## Politica Comercial
 
-- **Preco:** R$ 150,00
-- **Entrega:** 5 a 10 dias uteis (SEDEX para capitais: 3-5 dias)
-- **Garantia:** 30 dias apos recebimento — devolucao sem burocracia
-- **Desconto:** Sem desconto sem aprovacao do Fernando
-- **Parcelamento:** Ate 3x sem juros no cartao | PIX a vista
+| SKU | Cartao | Pix |
+|-----|--------|-----|
+| 1 frasco | R$ 185,00 | R$ 165,90 |
+| 2 frascos | R$ 347,90 | R$ 335,90 |
+| 3 frascos | R$ 448,90 | R$ 422,90 |
 
----
-
-## Perguntas Frequentes (para uso da Livia)
-
-**Q: Alpha Pulse aumenta testosterona artificialmente?**
-R: Nao. Alpha Pulse e 100% natural — suporta a producao fisiologica do proprio organismo. Sem hormonios exogenos.
-
-**Q: Posso tomar antes de treinar?**
-R: Nao e pre-treino estimulante (sem cafeina). E suplemento de base — tome com refeicao regular.
-
-**Q: Tem contraindicacao?**
-R: Cuidado com anticoagulantes (consultar medico). Nao recomendado para menores de 18 anos sem orientacao.
-
-**Q: Em quanto tempo sinto resultado?**
-R: Melhora de energia em 2-3 semanas; performance e foco em 4-6 semanas de uso continuo.
-
-**Q: Qual a diferenca do Alpha Pulse para outros complexos masculinos?**
-R: Combinacao de Ashwagandha KSM-66® (patenteada) + Tribulus + Maca com concentracoes clinicas — nao doses homeopaticas como a maioria dos concorrentes.
+- Frete gratis em compras acima de R$ 300
+- Estoque atual: 275 frascos
