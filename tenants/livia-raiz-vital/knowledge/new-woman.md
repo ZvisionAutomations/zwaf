@@ -3,76 +3,110 @@
 ## Visao Geral
 
 **Nome comercial:** New Woman
-**Categoria:** Suplemento feminino para equilibrio hormonal e bem-estar
-**Formato:** Capsulas (30 capsulas por frasco — suprimento para 30 dias)
-**Publico-alvo:** Mulheres a partir de 25 anos
-**Preco:** R$ 150,00
+**Marca:** PIVATELLI Suplementos
+**Tipo:** Suplemento alimentar de oleo de linhaca, oleo de primula e oleo de borragem com vitamina E em capsulas
+**Formato:** Capsulas — 60 capsulas de 1450mg cada (suprimento para 30 dias na dose padrao)
+**Publico-alvo:** Adultos com 19 anos ou mais
+**Restricao:** NÃO pode ser consumido por gestantes, lactantes e criancas
 
 ---
 
-## Beneficios Principais
+## Composicao
 
-- Equilibrio hormonal natural — suporte ao ciclo menstrual
-- Reducao de sintomas de TPM (tensao pre-menstrual)
-- Energia e disposicao ao longo do dia
-- Melhora do sono e reducao da ansiedade
-- Suporte a saude da pele, cabelos e unhas
-- Formula sem hormonios sinteticos — acao 100% natural
+**Ingredientes:** Oleo de linhaca, oleo de primula, oleo de borragem e vitamina E (acetato DL-alfa tocoferol).
+**Composicao da capsula:** gelatina, agua purificada e umectante glicerina.
+
+**Alergenicos:** NAO CONTÉM GLUTEN.
 
 ---
 
-## Composicao (por capsula)
+## Informacao Nutricional
 
-| Ingrediente | Quantidade | Funcao |
-|-------------|------------|--------|
-| Extrato de Vitex Agnus-Castus (fruto) | 200mg | Regulacao do ciclo menstrual, reducao da TPM |
-| Oleo de Primula (GLA 10%) | 500mg | Anti-inflamatorio, suporte hormonal |
-| Ashwagandha KSM-66® | 300mg | Adaptogeno, reducao do cortisol/ansiedade |
-| Magnesio Bisglicinato | 150mg | Qualidade do sono, TPM |
-| Zinco Quelado | 15mg | Imunidade, pele, cabelo, fertilidade |
-| Vitamina B6 (P-5-P) | 25mg | Metabolismo hormonal, humor |
-| Acido Folico (5-MTHF) | 400mcg | Saude reprodutiva |
+Porcao: 2,9g (2 capsulas)
+
+| Nutriente | Por porcao | %VD |
+|-----------|-----------|-----|
+| Valor energetico | 18 kcal = 76 kJ | 1% |
+| Gorduras totais | 2,0g | 4% |
+| Gorduras saturadas | 0,2g | 1% |
+| Gorduras trans | 0,0g | ** |
+| Gorduras monoinsaturadas | 0,3g | ** |
+| Gorduras poliinsaturadas | 1,5g | ** |
+| Acido alfa-linolenico | 0,63g | - |
+| Vitamina E | 10mg | 100% |
+
+Nao contem quantidades significativas de carboidratos, proteinas, fibra alimentar e sodio.
 
 ---
 
 ## Modo de Uso
 
-- **Dose:** 1 capsula ao dia com uma refeicao
-- **Horario recomendado:** Manha ou almoco
-- **Ciclo minimo:** 60 dias para resultados completos
-- **Armazenamento:** Lugar seco, fresco, longe da luz solar
+- **Dose:** 2 capsulas ao dia
+- **Duracao apos aberto:** 60 dias
+- **Armazenamento:** Nao especificado no rotulo (padrao: local seco e fresco)
 
 ---
 
 ## Informacoes Regulatorias
 
-- Registro ANVISA: em processo (notificado)
-- Fabricado em planta GMP certificada
-- Sem gluten | Sem lactose | Sem corantes artificiais
-- Vegano
+- **Registro ANVISA:** Produto dispensado de registro conforme RDC 240/2018
+- **Farmaceutica responsavel:** Dra. Aline Araujo dos Santos — CRF/SP 56.421
+- **NAO CONTEM GLUTEN**
+
+---
+
+## Fabricante e Distribuidor
+
+**Fabricado por:** SOROCAPS Industria Farmaceutica LTDA
+AV. VICTOR ANDREW, 1350 — EDEN — SOROCABA/SP, CEP 18086-390
+CNPJ: 09.542.984.0001-07
+
+**Distribuido por:** PIVATELLI SUPLEMENTOS
+RUA NATANAEL TITO SALMON, N-148 — OSASCO SP, CEP 06016-070
+CNPJ: 61.455.826/0001-30
+
+**SAC:** 11 9 7652-9295 | PIVATELLATENDIMENTO@GMAIL.COM
+
+**Codigo de barras:** 0618231261925
 
 ---
 
 ## Politica Comercial
 
-- **Preco:** R$ 150,00
-- **Entrega:** 5 a 10 dias uteis (SEDEX para capitais: 3-5 dias)
-- **Garantia:** 30 dias apos recebimento — devolucao sem burocracia
-- **Desconto:** Sem desconto sem aprovacao do Fernando
-- **Parcelamento:** Ate 3x sem juros no cartao | PIX a vista
+| SKU | Cartao | Pix |
+|-----|--------|-----|
+| 1 pote | R$ 185,00 | R$ 165,90 |
+| 2 potes | R$ 347,90 | R$ 335,90 |
+| 3 potes | R$ 448,90 | R$ 422,90 |
+
+- Frete gratis em compras acima de R$ 300
+- Frete via Melhor Envio ou Super Frete
+- Prazo de entrega: Sudeste 3-5 dias uteis | Sul/CO 5-7 | Norte/Nordeste 7-10
+- Estoque atual: 510 potes
+
+**O que a Livia pode oferecer de forma autonoma:** frete gratis, bundle offers (2 ou 3 potes)
+**Exige aprovacao Fernando:** outros descontos alem dos listados acima
 
 ---
 
-## Perguntas Frequentes (para uso da Livia)
+## Perguntas Frequentes
 
-**Q: New Woman tem contraindicacao?**
-R: Gravidas e lactantes devem consultar medico antes. Nao recomendado com anticoagulantes (Vitex).
-
-**Q: Posso tomar junto com outros suplementos?**
-R: Sim, e compativel com whey, multivitaminico e omega-3. Evitar junto a hormonios prescritos sem orientacao medica.
+**Q: O que e o New Woman?**
+R: Suplemento alimentar natural para mulheres na menopausa, com oleo de linhaca, oleo de primula e oleo de borragem.
 
 **Q: Em quanto tempo sinto resultado?**
-R: Melhora de energia em 2-3 semanas; equilibrio hormonal completo em 2-3 ciclos menstruais.
+R: A maioria comeca a notar melhorias nas primeiras 2 a 3 semanas. Para resultados completos, recomendamos 3 meses de uso continuo.
 
-**Q: Qual a diferenca para outros produtos do mercado?**
-R: New Woman usa Vitex de alta concentracao + Ashwagandha KSM-66® (patenteada) — combinacao de eficacia comprovada em estudos clinicos.
+**Q: Tem efeitos colaterais?**
+R: Ingredientes naturais, bem tolerados. Em casos raros pode haver leve desconforto gastrointestinal no inicio. Se usar medicamentos, consulte medico.
+
+**Q: Quanto demora o prazo de entrega?**
+R: Sudeste: 3-5 dias uteis | Sul/CO: 5-7 | Norte/NE: 7-10. Frete gratis em compras acima de R$ 300.
+
+---
+
+## Restricoes de Comunicacao
+
+- NAO prometer cura ou milagres
+- Sempre dizer que e uma AJUDA para tornar o processo mais facil e melhor a qualidade de vida
+- Usar linguagem: "Auxiliar para tornar o processo mais facil e eficaz"
