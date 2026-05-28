@@ -1,6 +1,6 @@
 {
-  "tenant_id": "livia-raiz-vital",
-  "agent_name": "Lívia",
+  "tenant_id": "caio-alpha-pulse",
+  "agent_name": "Caio",
   "brand_name": "Raiz Vital",
   "language": "pt-BR",
 
@@ -14,9 +14,9 @@
     "evolution_api_url": "${EVOLUTION_API_URL}",
     "evolution_api_key": "${EVOLUTION_API_KEY}",
     "phone_numbers": [
-      {"number": "${WA_NUMBER_1}", "instance": "${WA_INSTANCE_1}"}
+      {"number": "${WA_NUMBER_2}", "instance": "${WA_INSTANCE_2}"}
     ],
-    "_note": "Chip confirmado: +5511967318916. Expandir para mais chips quando disponíveis.",
+    "_note": "Chip masculino Alpha Pulse. Configure WA_NUMBER_2 e WA_INSTANCE_2 no ambiente.",
     "warm_up_mode": true,
     "warm_up_start_date": "${WA_WARMUP_START_DATE}",
     "messages_per_minute": 10,
@@ -28,26 +28,26 @@
     "api_key": "${ABACATE_PAY_KEY}",
     "webhook_secret": "${ABACATE_PAY_WEBHOOK_SECRET}",
     "products": {
-      "new-woman-1": {"qty": 1, "price_cents_card": 18500, "price_cents_pix": 16590, "product_id": "nw-001"},
-      "new-woman-2": {"qty": 2, "price_cents_card": 34790, "price_cents_pix": 33590, "product_id": "nw-002"},
-      "new-woman-3": {"qty": 3, "price_cents_card": 44890, "price_cents_pix": 42290, "product_id": "nw-003"}
+      "alpha-pulse-1": {"qty": 1, "price_cents_card": 18500, "price_cents_pix": 16590, "product_id": "ap-001"},
+      "alpha-pulse-2": {"qty": 2, "price_cents_card": 34790, "price_cents_pix": 33590, "product_id": "ap-002"},
+      "alpha-pulse-3": {"qty": 3, "price_cents_card": 44890, "price_cents_pix": 42290, "product_id": "ap-003"}
     },
     "free_shipping_above_cents": 30000,
-    "_status": "Conta Abacate Pay precisa ser criada por Fernando. product_ids são placeholders."
+    "_status": "Conta Abacate Pay precisa ser criada por Fernando. product_ids sao placeholders."
   },
 
   "inventory": {
-    "new-woman": {"initial_stock": 510}
+    "alpha-pulse": {"initial_stock": 275}
   },
 
   "agents_enabled": ["vendedor", "recompra", "suporte", "cobranca", "fidelizacao"],
 
   "router": {
     "keywords": {
-      "vendedor": ["quero comprar", "quanto custa", "como funciona", "tem desconto", "valor", "preço"],
-      "recompra": ["quero pedir de novo", "acabou", "renovar", "segundo pote", "recompra"],
-      "suporte": ["não chegou", "problema", "dúvida", "como tomar", "efeito", "reação"],
-      "cobranca": ["pix", "boleto", "pagamento", "não consegui pagar", "link expirou"]
+      "vendedor": ["quero comprar", "quanto custa", "como funciona", "tem desconto", "valor", "preco", "preço"],
+      "recompra": ["quero pedir de novo", "acabou", "renovar", "segundo frasco", "recompra"],
+      "suporte": ["nao chegou", "não chegou", "problema", "duvida", "dúvida", "como tomar", "efeito", "reacao", "reação"],
+      "cobranca": ["pix", "boleto", "pagamento", "nao consegui pagar", "não consegui pagar", "link expirou"]
     },
     "fallback_llm": true
   },

@@ -15,7 +15,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
-      - ${ZWAF_TENANTS:-livia-raiz-vital}-postgres-data:/var/lib/postgresql/data
+      - zwaf-postgres-data:/var/lib/postgresql/data
       - ./infra/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
@@ -27,7 +27,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     volumes:
-      - ${ZWAF_TENANTS:-livia-raiz-vital}-redis-data:/data
+      - zwaf-redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -55,7 +55,7 @@ services:
       DATABASE_SAVE_DATA_CHATS: "true"
       # Webhook global -> ZWAF API (apenas messages.upsert)
       WEBHOOK_GLOBAL_ENABLED: "true"
-      WEBHOOK_GLOBAL_URL: "http://zwaf-api:8000/v1/webhook/${ZWAF_TENANTS:-livia-raiz-vital}"
+      WEBHOOK_GLOBAL_URL: "http://zwaf-api:8000/v1/webhook/${EVOLUTION_WEBHOOK_TENANT:-livia-raiz-vital}"
       WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS: "false"
       WEBHOOK_EVENTS_MESSAGES_UPSERT: "true"
       WEBHOOK_EVENTS_SEND_LIST: "false"
@@ -66,7 +66,7 @@ services:
       WEBHOOK_EVENTS_CONNECTION_UPDATE: "false"
       WEBHOOK_EVENTS_CALL: "false"
     volumes:
-      - ${ZWAF_TENANTS:-livia-raiz-vital}-evolution-data:/evolution/instances
+      - zwaf-evolution-data:/evolution/instances
     ports:
       - "8080:8080"
     depends_on:
@@ -97,6 +97,11 @@ services:
       WA_NUMBER_2: ${WA_NUMBER_2:-}
       WA_INSTANCE_2: ${WA_INSTANCE_2:-}
       WA_WARMUP_START_DATE: ${WA_WARMUP_START_DATE}
+      REPORT_WA_DEST_NUMBER: ${REPORT_WA_DEST_NUMBER:-}
+      REPORT_WA_GROUP_ID: ${REPORT_WA_GROUP_ID:-}
+      CAIO_PERSONAL_WA_NUMBER: ${CAIO_PERSONAL_WA_NUMBER:-}
+      INITIAL_STOCK_NEW_WOMAN: ${INITIAL_STOCK_NEW_WOMAN:-510}
+      INITIAL_STOCK_ALPHA_PULSE: ${INITIAL_STOCK_ALPHA_PULSE:-275}
       ABACATE_PAY_KEY: ${ABACATE_PAY_KEY}
       ABACATE_PAY_WEBHOOK_SECRET: ${ABACATE_PAY_WEBHOOK_SECRET}
       ABACATE_PAY_RETURN_URL: ${ABACATE_PAY_RETURN_URL}
@@ -125,6 +130,6 @@ services:
       - ./tenants:/app/tenants:ro
 
 volumes:
-  livia-raiz-vital-postgres-data:
-  livia-raiz-vital-redis-data:
-  livia-raiz-vital-evolution-data:
+  zwaf-postgres-data:
+  zwaf-redis-data:
+  zwaf-evolution-data:

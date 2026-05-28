@@ -1,13 +1,13 @@
-# Alpha Pulse — Ficha Tecnica
+# Alpha Pulse - Ficha Tecnica
 
 ## Visao Geral
 
 **Nome comercial:** AlphaPulse (Sabor Laranja)
 **Marca:** PIVATELLI Suplementos
-**Tipo:** Suplemento Alimentar Liquido — Solucao Oral
-**Formato:** Frasco 30mL — 30 porcoes de 1mL (17 gotas) cada
+**Tipo:** Suplemento Alimentar Liquido - Solucao Oral
+**Formato:** Frasco 30mL - 30 porcoes de 1mL (17 gotas) cada
 **Publico-alvo:** Adultos. Produto e dosagem recomendada para adultos.
-**Restricao:** NAO pode ser consumido por gestantes, lactantes e criancas
+**Restricao:** NAO pode ser consumido por gestantes, lactantes e criancas.
 
 ---
 
@@ -45,7 +45,7 @@ Nao contem quantidades significativas de valor energetico, carboidratos, acucare
 
 ## Informacoes Regulatorias
 
-- **Registro ANVISA:** Alimento notificado — 25351063985202591
+- **Registro ANVISA:** Alimento notificado - 25351063985202591
 - **NAO CONTEM GLUTEN**
 
 ---
@@ -56,17 +56,11 @@ Nao contem quantidades significativas de valor energetico, carboidratos, acucare
 CNPJ: 13.802.488/0001-12
 
 **Distribuido exclusivamente por:** PIVATELLI SUPLEMENTOS
-R. NATHANAEL TITO SALMON, 148, 2 andar sala 15, Centro — OSASCO/SP
+R. NATHANAEL TITO SALMON, 148, 2 andar sala 15, Centro - OSASCO/SP
 CNPJ: 61.455.826/0001-30
 Contato: (11) 9 8834-7270
 
 **Codigo de barras:** 7908946506613
-
----
-
-## IMPORTANTE — Atendimento Alpha Pulse
-
-Alpha Pulse e voltado para publico masculino. Conforme briefing do cliente (Fernando Pivato), o atendimento do Alpha Pulse deve ser feito por um atendente masculino — NAO pela Livia. Este ponto depende de definicao futura de agente masculino pelo cliente.
 
 ---
 
@@ -80,3 +74,11 @@ Alpha Pulse e voltado para publico masculino. Conforme briefing do cliente (Fern
 
 - Frete gratis em compras acima de R$ 300
 - Estoque atual: 275 frascos
+
+---
+
+## Restricoes de Comunicacao
+
+- Nao prometer cura, garantia de resultado ou efeito milagroso.
+- Nao fazer aconselhamento medico.
+- Em duvidas de saude, medicamentos ou efeitos adversos, orientar consulta medica.
