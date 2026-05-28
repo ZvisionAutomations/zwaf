@@ -12,10 +12,14 @@ Uso:
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 from unittest.mock import patch
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 from zwaf.tools.base import ToolResult
 from zwaf.tools.whatsapp import WhatsAppTool, get_warm_up_limit
@@ -42,6 +46,7 @@ async def simulate_day(day: int, messages_per_minute: int = 10) -> DayResult:
         api_key="test-key",
         instance="test-1",
         messages_per_minute=messages_per_minute,
+        typing_simulation=False,
         warm_up_mode=True,
         warm_up_day=day,
     )

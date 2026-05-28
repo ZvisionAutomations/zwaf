@@ -1,51 +1,39 @@
-# Objecoes — Scripts de Resposta
+# Objecoes - Scripts New Woman
 
-Fonte: briefing de onboarding — Fernando Pivato (Raiz Vital)
+Fonte: briefing de onboarding - Fernando Pivato (Raiz Vital)
 
 ---
 
 ## 1. "E muito caro"
 
-**Reframe — investimento em saude:**
-
-Entendo essa preocupacao. Mas pensa comigo: voce ja gastou com medico, exame ou remedio por causa de algo que poderia ter prevenido? O [produto] e um investimento pequeno comparado ao que vem depois. E diferente do que voce encontra por ai — sem agrotoxicos, sem conservantes, sem ingredientes artificiais. Voce esta pagando por algo que realmente funciona.
+Entendo essa preocupacao. O New Woman e um investimento em uma rotina de cuidado mais consistente, com ingredientes descritos em rotulo: oleo de linhaca, oleo de primula, oleo de borragem e vitamina E. No Pix, 1 pote sai por R$165,90; o kit com 2 potes ja tem frete gratis.
 
 ---
 
 ## 2. "Nao sei se funciona / tem comprovacao?"
 
-**Prova social + credibilidade:**
-
-Faz todo sentido querer ter certeza antes de investir. Posso te mostrar depoimentos de clientes que ja usaram e sentiram diferenca. Alem disso, os ingredientes do [produto] tem estudos que comprovam sua eficacia — nao e promessa, e ciencia aplicada em um produto com origem rastreavel e processo certificado.
+Faz todo sentido querer ter certeza antes de investir. Posso te mostrar a ficha tecnica do New Woman e explicar a composicao real do rotulo. Nao e promessa milagrosa; e um suplemento alimentar com ingredientes documentados.
 
 ---
 
 ## 3. "Vou pensar / deixa eu ver depois"
 
-**Leveza + urgencia suave:**
-
-Claro, sem pressao! So quero que voce saiba que produzimos em lotes pequenos para garantir a qualidade, e o estoque e limitado. Se quiser, eu te mando um lembrete quando estiver decidindo — assim voce nao perde caso o estoque acabe antes.
+Claro, sem pressao. So quero que voce saiba que o estoque e limitado. Se fizer sentido para voce, posso deixar o link Pix pronto para garantir o pote ou o kit.
 
 ---
 
 ## 4. "Prefiro comprar no mercado / farmacia"
 
-**Diferenciar sem atacar:**
-
-Voce tem razao em querer praticidade. A questao e que os produtos que voce encontra no mercado geralmente sao versoes mais diluidas, com doses menores ou qualidade de ingrediente inferior. O [produto] tem origem rastreavel, processo certificado e concentracao pensada para resultado real — isso e dificil de encontrar nas prateleiras convencionais.
+Voce tem razao em querer praticidade. A diferenca e que o New Woman tem uma composicao especifica em capsulas, com oleo de linhaca, oleo de primula, oleo de borragem e vitamina E. Posso te passar a ficha tecnica para comparar com calma.
 
 ---
 
 ## 5. "Ja tentei produto natural antes e nao funcionou"
 
-**Validar experiencia + diferenciar:**
-
-Que frustracai, entendo. Pode ter acontecido por varias razoes — formulacao errada, dosagem insuficiente ou procedencia duvidosa. Me conta o que voce usou antes? Assim consigo te explicar especificamente por que o [produto] e diferente. Muitos clientes nossos vieram com a mesma historia e tiveram resultados completamente diferentes.
+Entendo, e e frustrante quando algo nao atende a expectativa. Me conta o que voce usou antes? Assim consigo te explicar a composicao do New Woman sem inventar nada e voce compara com seguranca.
 
 ---
 
 ## 6. "Nao tenho tempo para seguir uma rotina"
 
-**Simplificar:**
-
-Essa e a parte mais facil! O New Woman e so 2 capsulas ao dia — pode ser com o cafe da manha ou qualquer refeicao. O Alpha Pulse e ainda mais simples: so 17 gotas por dia. Nao tem horario fixo, nao tem protocolo complicado. Se voce come, voce consegue incluir isso na sua rotina.
+Essa e a parte mais facil: o New Woman e 2 capsulas ao dia, podendo ser com uma refeicao. Nao tem protocolo complicado.

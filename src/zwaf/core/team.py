@@ -158,6 +158,15 @@ class ZWAFTeam:
             from zwaf.agents.cobranca import build_cobranca_agent
             return build_cobranca_agent(**kwargs)
 
+        if agent_name == "fidelizacao":
+            logger.warning(
+                "RouterAgent tentou rotear para 'fidelizacao' — agente nao e roteavel diretamente "
+                "(FidelizacaoScheduler opera via cron, nao por mensagem). "
+                "Redirecionando para vendedor."
+            )
+            from zwaf.agents.vendedor import build_vendedor_agent
+            return build_vendedor_agent(**kwargs)
+
         logger.warning("Unknown agent name '%s' — defaulting to vendedor", agent_name)
         from zwaf.agents.vendedor import build_vendedor_agent
         return build_vendedor_agent(**kwargs)
