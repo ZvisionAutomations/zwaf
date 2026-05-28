@@ -28,6 +28,8 @@ logger = logging.getLogger("zwaf.tools.whatsapp")
 
 def _normalize_phone(phone: str) -> str:
     """Remove +, espaços e hífens. Evolution API espera só dígitos."""
+    if phone.endswith("@g.us"):
+        return phone
     return re.sub(r"[^\d]", "", phone)
 
 
@@ -222,7 +224,9 @@ class WhatsAppTool(BaseTool):
     def _reset_daily_count_if_needed(self) -> None:
         from datetime import date
         today = date.today().isoformat()
-        if self._daily_count_date != today:
+        if self._daily_count_date is None:
+            self._daily_count_date = today
+        elif self._daily_count_date != today:
             self._daily_sent_count = 0
             self._daily_count_date = today
 
@@ -357,13 +361,18 @@ class WhatsAppTool(BaseTool):
             "Sending WhatsApp via Evolution API",
             extra={"phone_tail": phone[-4:], "length": len(text), "instance": self.current_instance},
         )
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post(url, json=payload, headers=self._headers())
-            if resp.status_code == 429:
-                raise RateLimitError(f"HTTP 429: {resp.text[:100]}")
-            resp.raise_for_status()
-            data = resp.json()
-            return ToolResult.ok({"message_id": data.get("key", {}).get("id", ""), "status": "sent"})
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.post(url, json=payload, headers=self._headers())
+                if resp.status_code == 429:
+                    raise RateLimitError(f"HTTP 429: {resp.text[:100]}")
+                resp.raise_for_status()
+                data = resp.json()
+                return ToolResult.ok({"message_id": data.get("key", {}).get("id", ""), "status": "sent"})
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                raise RateLimitError(f"HTTP 429: {e.response.text[:100]}") from e
+            raise
 
     async def _set_typing(self, phone: str, text_length: int) -> None:
         """Envia presença 'composing'. Best-effort — nunca bloqueia o envio."""

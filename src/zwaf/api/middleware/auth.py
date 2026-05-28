@@ -12,8 +12,10 @@ _API_KEYS = set(filter(None, os.getenv("ZWAF_API_KEYS", "").split(",")))
 # Rotas publicas que nao precisam de autenticacao
 _PUBLIC_PATHS = {"/health", "/metrics", "/docs", "/redoc", "/openapi.json"}
 
-# Prefixos publicos — webhooks sao protegidos pela rede interna (Evolution API)
-# e por HMAC (Abacate Pay), nao por API key
+# Prefixos publicos — webhooks nao usam API key por design intencional:
+#   - Evolution API (WhatsApp): chama de rede interna sem suporte a headers customizados
+#   - Abacate Pay (pagamentos): autenticado por HMAC-SHA256 na propria rota do webhook
+# Adicionar API key aqui quebraria a integracao com ambos os provedores.
 _PUBLIC_PREFIXES = ("/docs", "/redoc", "/v1/webhook/")
 
 

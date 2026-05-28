@@ -13,9 +13,13 @@ Uso:
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock, patch
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 from zwaf.tools.base import RateLimitError, ToolResult
 from zwaf.tools.whatsapp import WhatsAppTool, get_warm_up_limit
@@ -34,6 +38,7 @@ async def test_rate_limiter_enforces_limit() -> ThrottleResult:
     tool = WhatsAppTool(
         base_url="http://mock", api_key="test-key", instance="test-1",
         messages_per_minute=10,
+        typing_simulation=False,
     )
     sent_count = 0
 
@@ -66,7 +71,7 @@ async def test_429_backoff_minimum_30s() -> ThrottleResult:
     """Valida que HTTP 429 resulta em backoff >= 30s."""
     tool = WhatsAppTool(
         base_url="http://mock", api_key="test-key", instance="test-1",
-        messages_per_minute=100, warm_up_mode=False,
+        messages_per_minute=100, typing_simulation=False, warm_up_mode=False,
     )
 
     sleep_calls = []
@@ -111,7 +116,7 @@ async def test_queue_no_message_loss() -> ThrottleResult:
     """Valida que a Queue não perde mensagens durante throttle."""
     tool = WhatsAppTool(
         base_url="http://mock", api_key="test-key", instance="test-1",
-        messages_per_minute=100, warm_up_mode=False,
+        messages_per_minute=100, typing_simulation=False, warm_up_mode=False,
     )
 
     sent_messages = []
@@ -176,7 +181,7 @@ async def test_5xx_uses_normal_backoff() -> ThrottleResult:
 
     tool = WhatsAppTool(
         base_url="http://mock", api_key="test-key", instance="test-1",
-        messages_per_minute=100, warm_up_mode=False,
+        messages_per_minute=100, typing_simulation=False, warm_up_mode=False,
     )
 
     sleep_calls = []

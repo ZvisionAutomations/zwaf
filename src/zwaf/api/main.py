@@ -19,6 +19,8 @@ from zwaf.api.middleware.auth import APIKeyMiddleware
 from zwaf.api.routes import health, webhook, payment_webhook
 from zwaf.core.team import build_team
 from zwaf.core.tenant import TenantConfig, TenantLoadError
+from zwaf.reporting.error_handler import notify_critical_error, setup_critical_error_handler
+from zwaf.reporting.scheduler import register_daily_report_scheduler
 
 logger = logging.getLogger("zwaf.api")
 
@@ -65,9 +67,32 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.error("Unexpected error loading tenant '%s': %s", tenant_id, e)
 
     app.state.teams = teams
+
+    critical_whatsapp_tool = None
+    for tenant_id, team in teams.items():
+        whatsapp_tool = getattr(team, "_whatsapp", None)
+        if critical_whatsapp_tool is None and whatsapp_tool is not None:
+            critical_whatsapp_tool = whatsapp_tool
+        register_daily_report_scheduler(
+            agno_app=app,
+            db_url=db_url,
+            tenant_id=tenant_id,
+            whatsapp_tool=whatsapp_tool,
+        )
+
+    setup_critical_error_handler(critical_whatsapp_tool)
+    app.state.critical_error_whatsapp_tool = critical_whatsapp_tool
     logger.info("ZWAF started with %d tenant(s): %s", len(teams), list(teams.keys()))
 
     yield
+
+    # Shutdown: parar scheduler de relatorio diario
+    for scheduler in getattr(app.state, "daily_report_schedulers", []):
+        try:
+            if scheduler.running:
+                scheduler.shutdown(wait=False)
+        except Exception:
+            pass
 
     # Shutdown: parar schedulers de fidelizacao
     for tenant_id, team in teams.items():
@@ -118,6 +143,8 @@ app.include_router(payment_webhook.router, prefix="/v1/webhook", tags=["Payments
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc: Exception) -> JSONResponse:
+    whatsapp_tool = getattr(request.app.state, "critical_error_whatsapp_tool", None)
+    await notify_critical_error(whatsapp_tool, exc)
     logger.error("Unhandled exception: %s path=%s", str(exc), str(request.url))
     return JSONResponse(
         status_code=500,
