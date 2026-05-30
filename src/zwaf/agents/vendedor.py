@@ -5,8 +5,8 @@ from agno.agent import Agent
 
 from zwaf.core.base_agent import build_agent
 from zwaf.core.tenant import TenantConfig
+from zwaf.conversion.payment_gate import make_guarded_payment_link_generator
 from zwaf.tools.catalog import make_catalog_search
-from zwaf.tools.payment import make_payment_link_generator
 from zwaf.tools.whatsapp import WhatsAppTool
 
 
@@ -25,7 +25,7 @@ def build_vendedor_agent(
         whatsapp_tool.send_message,
         whatsapp_tool._set_typing,
         make_catalog_search(tenant_config.tenant_id),
-        make_payment_link_generator(tenant_config.tenant_id, tenant_config.payment),
+        make_guarded_payment_link_generator(tenant_config.tenant_id, tenant_config.payment),
     ]
 
     return build_agent(
