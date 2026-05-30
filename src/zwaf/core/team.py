@@ -10,8 +10,10 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from zwaf.conversion.intelligence import LeadSignal, analyze_message
 from zwaf.core.router_agent import RouterAgent, RouteResult
 from zwaf.core.tenant import TenantConfig
+from zwaf.memory.lead_store import append_conversion_event
 from zwaf.tools.whatsapp import WhatsAppTool
 
 logger = logging.getLogger("zwaf.core.team")
@@ -25,6 +27,7 @@ class TeamResponse:
     lead_id: str
     latency_ms: float
     route_result: RouteResult
+    conversion_signal: Optional[LeadSignal] = None
 
 
 class ZWAFTeam:
@@ -85,6 +88,10 @@ class ZWAFTeam:
             )
 
         # 2. Route
+        conversion_signal = analyze_message(
+            guard_result.sanitized_input,
+            tenant_id=self._tenant.tenant_id,
+        )
         route = await self._router.route(guard_result.sanitized_input, phone=phone)
         logger.info(
             "Routed message",
@@ -93,7 +100,17 @@ class ZWAFTeam:
                 "confidence": route.confidence,
                 "via_llm": route.via_llm,
                 "session_id": session_id,
+                "conversion_action": conversion_signal.action.value,
+                "buying_intent": conversion_signal.buying_intent.value,
             },
+        )
+        await append_conversion_event(
+            phone=phone,
+            tenant_id=self._tenant.tenant_id,
+            session_id=session_id,
+            lead_id=lead_id,
+            agent_name=route.agent_name,
+            signal=conversion_signal.to_dict(),
         )
 
         # 3. Execute agent
@@ -111,6 +128,7 @@ class ZWAFTeam:
             lead_id=lead_id,
             latency_ms=(time.monotonic() - start) * 1000,
             route_result=route,
+            conversion_signal=conversion_signal,
         )
 
     async def _run_agent(

@@ -88,3 +88,44 @@ async def append_purchase_history(
         await conn.close()
     except Exception as e:
         logger.warning("lead_store.append_purchase_history failed: %s", e)
+
+
+async def append_conversion_event(
+    phone: str,
+    tenant_id: str,
+    session_id: str,
+    lead_id: str,
+    agent_name: str,
+    signal: dict[str, Any],
+) -> None:
+    """Persist conversion signal best-effort for funnel analysis."""
+    if not _DB_URL:
+        return
+    try:
+        import asyncpg
+        conn = await asyncpg.connect(_DB_URL)
+        await conn.execute(
+            """
+            INSERT INTO conversion_events (
+                tenant_id, lead_phone, session_id, lead_id, agent_name,
+                sentiment, buying_intent, action, should_send_payment_link,
+                confidence, reasons, raw_signal
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb)
+            """,
+            tenant_id,
+            phone,
+            session_id,
+            lead_id,
+            agent_name,
+            signal.get("sentiment"),
+            signal.get("buying_intent"),
+            signal.get("action"),
+            signal.get("should_send_payment_link", False),
+            float(signal.get("confidence", 0.0)),
+            json.dumps(signal.get("reasons", [])),
+            json.dumps(signal),
+        )
+        await conn.close()
+    except Exception as e:
+        logger.warning("lead_store.append_conversion_event failed: %s", e)

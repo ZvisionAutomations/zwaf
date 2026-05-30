@@ -68,3 +68,25 @@ CREATE TABLE IF NOT EXISTS payment_events (
 
 CREATE INDEX IF NOT EXISTS idx_payments_tenant_status ON payment_events(tenant_id, status);
 CREATE INDEX IF NOT EXISTS idx_payments_payment_id ON payment_events(payment_id);
+
+-- Conversion events (sentimento, intencao, link de pagamento)
+
+CREATE TABLE IF NOT EXISTS conversion_events (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id TEXT NOT NULL,
+    lead_phone TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    lead_id TEXT NOT NULL,
+    agent_name TEXT NOT NULL,
+    sentiment TEXT NOT NULL,
+    buying_intent TEXT NOT NULL,
+    action TEXT NOT NULL,
+    should_send_payment_link BOOLEAN DEFAULT FALSE,
+    confidence NUMERIC(4, 3) DEFAULT 0,
+    reasons JSONB DEFAULT '[]',
+    raw_signal JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversion_events_tenant_created ON conversion_events(tenant_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_conversion_events_tenant_action ON conversion_events(tenant_id, action);
