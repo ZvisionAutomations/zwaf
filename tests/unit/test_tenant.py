@@ -16,6 +16,7 @@ from zwaf.core.tenant import (
     RouterConfig,
     TenantConfig,
     TenantLoadError,
+    TypingSimulationConfig,
     WhatsAppConfig,
 )
 
@@ -104,6 +105,75 @@ class TestTenantConfigLoad:
         assert isinstance(cfg.router, RouterConfig)
         assert "vendedor" in cfg.router.keywords
         assert "quero comprar" in cfg.router.keywords["vendedor"]
+
+    def test_load_legacy_typing_simulation_boolean(self, tmp_path):
+        root = _write_config(tmp_path, MINIMAL_CONFIG, "test-tenant")
+        cfg = TenantConfig.load("test-tenant", tenants_root=root / "tenants")
+        assert isinstance(cfg.whatsapp.typing_simulation, TypingSimulationConfig)
+        assert cfg.whatsapp.typing_simulation.enabled is True
+        assert cfg.whatsapp.typing_simulation.min_ms == 1000
+        assert cfg.whatsapp.typing_simulation.max_ms == 5000
+
+    def test_load_typing_simulation_object(self, tmp_path):
+        config = {
+            **MINIMAL_CONFIG,
+            "whatsapp": {
+                **MINIMAL_CONFIG["whatsapp"],
+                "typing_simulation": {
+                    "enabled": True,
+                    "min_ms": 1500,
+                    "max_ms": 7000,
+                    "chars_per_second": 25,
+                    "jitter_ms": 250,
+                },
+                "send_text_delay_ms": 800,
+            },
+        }
+        root = _write_config(tmp_path, config, "test-tenant")
+        cfg = TenantConfig.load("test-tenant", tenants_root=root / "tenants")
+        assert cfg.whatsapp.typing_simulation == TypingSimulationConfig(
+            enabled=True,
+            min_ms=1500,
+            max_ms=7000,
+            chars_per_second=25,
+            jitter_ms=250,
+        )
+        assert cfg.whatsapp.send_text_delay_ms == 800
+
+    @pytest.mark.parametrize(
+        "typing_config, error",
+        [
+            ({"enabled": "yes"}, "enabled"),
+            ({"min_ms": -1}, "min_ms"),
+            ({"max_ms": 60001}, "max_ms"),
+            ({"min_ms": 5000, "max_ms": 1000}, "min_ms"),
+            ({"chars_per_second": 0}, "chars_per_second"),
+            ({"jitter_ms": -1}, "jitter_ms"),
+        ],
+    )
+    def test_invalid_typing_simulation_raises(self, tmp_path, typing_config, error):
+        config = {
+            **MINIMAL_CONFIG,
+            "whatsapp": {
+                **MINIMAL_CONFIG["whatsapp"],
+                "typing_simulation": typing_config,
+            },
+        }
+        root = _write_config(tmp_path, config, "test-tenant")
+        with pytest.raises(TenantLoadError, match=error):
+            TenantConfig.load("test-tenant", tenants_root=root / "tenants")
+
+    def test_invalid_send_text_delay_raises(self, tmp_path):
+        config = {
+            **MINIMAL_CONFIG,
+            "whatsapp": {
+                **MINIMAL_CONFIG["whatsapp"],
+                "send_text_delay_ms": -1,
+            },
+        }
+        root = _write_config(tmp_path, config, "test-tenant")
+        with pytest.raises(TenantLoadError, match="send_text_delay_ms"):
+            TenantConfig.load("test-tenant", tenants_root=root / "tenants")
 
     def test_missing_tenant_raises(self, tmp_path):
         with pytest.raises(TenantLoadError, match="not found"):

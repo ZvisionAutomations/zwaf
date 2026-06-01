@@ -15,6 +15,14 @@
     "evolution_api_url": "${EVOLUTION_API_URL}",
     "evolution_api_key": "${EVOLUTION_API_KEY}",
     "messages_per_minute": 12,
+    "typing_simulation": {
+      "enabled": true,
+      "min_ms": 1000,
+      "max_ms": 5000,
+      "chars_per_second": 50,
+      "jitter_ms": 0
+    },
+    "send_text_delay_ms": null,
     "warm_up_mode": false,
     "warm_up_start_date": null
   },
@@ -26,6 +34,18 @@
       "vendedor": ["quero comprar", "quero adquirir", "me interessa", "como funciona", "qual o preço", "valor"]
     },
     "default_agent": "vendedor"
+  },
+  "payment": {
+    "provider": "asaas",
+    "api_key": "${ASAAS_API_KEY}",
+    "base_url": "${ASAAS_BASE_URL}",
+    "webhook_auth_token": "${ASAAS_WEBHOOK_AUTH_TOKEN}",
+    "user_agent": "${ASAAS_USER_AGENT}",
+    "return_url": "${ASAAS_RETURN_URL}",
+    "completion_url": "${ASAAS_COMPLETION_URL}",
+    "default_customer_cpf_cnpj": "${ASAAS_DEFAULT_CUSTOMER_CPF_CNPJ}",
+    "billing_type": "PIX",
+    "products": {}
   },
   "escalation": {
     "phone": "${ESCALATION_PHONE}",

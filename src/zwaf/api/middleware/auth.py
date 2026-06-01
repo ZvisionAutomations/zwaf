@@ -14,7 +14,7 @@ _PUBLIC_PATHS = {"/health", "/metrics", "/docs", "/redoc", "/openapi.json"}
 
 # Prefixos publicos — webhooks nao usam API key por design intencional:
 #   - Evolution API (WhatsApp): chama de rede interna sem suporte a headers customizados
-#   - Abacate Pay (pagamentos): autenticado por HMAC-SHA256 na propria rota do webhook
+#   - Asaas (pagamentos): autenticado por auth token na propria rota do webhook
 # Adicionar API key aqui quebraria a integracao com ambos os provedores.
 _PUBLIC_PREFIXES = ("/docs", "/redoc", "/v1/webhook/")
 

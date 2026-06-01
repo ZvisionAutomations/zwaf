@@ -254,7 +254,12 @@ def build_team(
             api_key=tenant_config.whatsapp.evolution_api_key,
             base_url=tenant_config.whatsapp.evolution_api_url,
             messages_per_minute=tenant_config.whatsapp.messages_per_minute,
-            typing_simulation=tenant_config.whatsapp.typing_simulation,
+            typing_simulation=tenant_config.whatsapp.typing_simulation.enabled,
+            typing_min_ms=tenant_config.whatsapp.typing_simulation.min_ms,
+            typing_max_ms=tenant_config.whatsapp.typing_simulation.max_ms,
+            typing_chars_per_second=tenant_config.whatsapp.typing_simulation.chars_per_second,
+            typing_jitter_ms=tenant_config.whatsapp.typing_simulation.jitter_ms,
+            send_text_delay_ms=tenant_config.whatsapp.send_text_delay_ms,
             warm_up_mode=tenant_config.whatsapp.warm_up_mode,
             warm_up_day=tenant_config.whatsapp.current_warm_up_day,
         )
@@ -263,6 +268,12 @@ def build_team(
             api_key=tenant_config.whatsapp.evolution_api_key,
             base_url=tenant_config.whatsapp.evolution_api_url,
             messages_per_minute=tenant_config.whatsapp.messages_per_minute,
+            typing_simulation=tenant_config.whatsapp.typing_simulation.enabled,
+            typing_min_ms=tenant_config.whatsapp.typing_simulation.min_ms,
+            typing_max_ms=tenant_config.whatsapp.typing_simulation.max_ms,
+            typing_chars_per_second=tenant_config.whatsapp.typing_simulation.chars_per_second,
+            typing_jitter_ms=tenant_config.whatsapp.typing_simulation.jitter_ms,
+            send_text_delay_ms=tenant_config.whatsapp.send_text_delay_ms,
         )
 
     # Router com purchase_history_fn para detectar clientes recorrentes
