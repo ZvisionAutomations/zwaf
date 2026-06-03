@@ -1,0 +1,42 @@
+# docker-compose.https.yml - HTTPS reverse proxy for client deploy
+#
+# Usage:
+#   docker compose -f docker-compose.client.yml -f docker-compose.https.yml \
+#     --env-file .env.raiz-vital up -d --wait caddy
+#
+# Requires DNS:
+#   ZWAF_PUBLIC_DOMAIN      -> VPS Elastic IP
+#   EVOLUTION_PUBLIC_DOMAIN -> VPS Elastic IP
+
+services:
+  evolution-api:
+    environment:
+      SERVER_URL: https://${EVOLUTION_PUBLIC_DOMAIN}
+    ports: !reset []
+
+  zwaf-api:
+    ports: !reset []
+
+  caddy:
+    image: caddy:2.11-alpine
+    restart: unless-stopped
+    environment:
+      ZWAF_PUBLIC_DOMAIN: ${ZWAF_PUBLIC_DOMAIN}
+      EVOLUTION_PUBLIC_DOMAIN: ${EVOLUTION_PUBLIC_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - zwaf-caddy-data:/data
+      - zwaf-caddy-config:/config
+    depends_on:
+      zwaf-api:
+        condition: service_healthy
+      evolution-api:
+        condition: service_healthy
+
+volumes:
+  zwaf-caddy-data:
+  zwaf-caddy-config:
