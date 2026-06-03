@@ -67,6 +67,12 @@ def validate_checkout_ready(
             code="blocked_product",
             message="Alpha Pulse deve ser atendido pelo consultor masculino/Caio.",
         )
+    if tenant_id == "caio-alpha-pulse" and normalized_product.startswith("new-woman"):
+        return CheckoutValidation(
+            ok=False,
+            code="blocked_product",
+            message="New Woman deve ser atendido pela Livia, consultora da Raiz Vital.",
+        )
 
     missing: list[str] = []
     if not _has_full_name(customer_name):

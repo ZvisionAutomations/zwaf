@@ -22,6 +22,19 @@ PRODUCTS = {
     },
 }
 
+TIERED_PRODUCTS = {
+    "new-woman": {
+        "product_id": "nw-001",
+        "pricing_model": "tiered_unit",
+        "card_markup_pct": 10,
+        "unit_price_tiers_pix_cents": [
+            {"min_qty": 1, "max_qty": 1, "unit_cents": 14900},
+            {"min_qty": 2, "max_qty": 4, "unit_cents": 12800},
+            {"min_qty": 5, "max_qty": None, "unit_cents": 11990},
+        ],
+    }
+}
+
 VALID_DOCUMENT = "123" + "456" + "789" + "01"
 VALID_ADDRESS = {
     "postal_code": "01001000",
@@ -222,6 +235,70 @@ async def test_generate_payment_link_requires_document_before_creating_customer(
 
     assert result == "Erro ao gerar link: dados obrigatorios do pedido incompletos."
     assert fake_client.calls == []
+
+
+def test_tier_unit_cents_selects_correct_bracket():
+    tiers = TIERED_PRODUCTS["new-woman"]["unit_price_tiers_pix_cents"]
+    assert payment._tier_unit_cents(tiers, 1) == 14900
+    assert payment._tier_unit_cents(tiers, 2) == 12800
+    assert payment._tier_unit_cents(tiers, 4) == 12800
+    assert payment._tier_unit_cents(tiers, 5) == 11990
+    assert payment._tier_unit_cents(tiers, 12) == 11990
+
+
+def test_tiered_total_cents_pix():
+    cfg = TIERED_PRODUCTS["new-woman"]
+    assert payment._total_cents(cfg, 1, "PIX") == 14900
+    assert payment._total_cents(cfg, 3, "PIX") == 38400
+    assert payment._total_cents(cfg, 5, "PIX") == 59950
+    assert payment._total_cents(cfg, 10, "PIX") == 119900
+
+
+def test_tiered_total_cents_card_applies_markup():
+    cfg = TIERED_PRODUCTS["new-woman"]
+    # 14900 * 1.10 = 16390
+    assert payment._total_cents(cfg, 1, "CREDIT_CARD") == 16390
+    # (12800 * 1.10 = 14080) * 2 = 28160
+    assert payment._total_cents(cfg, 2, "CREDIT_CARD") == 28160
+
+
+def test_resolve_product_and_qty_tiered_and_legacy():
+    cfg, qty = payment._resolve_product_and_qty(TIERED_PRODUCTS, "new-woman", 3)
+    assert qty == 3
+    assert cfg.get("pricing_model") == "tiered_unit"
+
+    # legacy SKU still derives qty from the numeric suffix
+    legacy = {"new-woman-2": {"qty": 2, "price_cents_pix": 33590}}
+    cfg2, qty2 = payment._resolve_product_and_qty(legacy, "new-woman-2", 0)
+    assert qty2 == 2
+    assert cfg2["price_cents_pix"] == 33590
+
+
+@pytest.mark.asyncio
+async def test_generate_payment_link_tiered_quantity_three_pix(monkeypatch):
+    fake_client = FakeAsyncClient()
+    monkeypatch.setattr(payment.httpx, "AsyncClient", lambda **kwargs: fake_client)
+    monkeypatch.setenv("ASAAS_API_KEY", "test-asaas-key")
+    monkeypatch.setenv("ASAAS_BASE_URL", "https://api-sandbox.asaas.com/v3")
+
+    generate_payment_link = payment.make_payment_link_generator(
+        "livia-raiz-vital",
+        {"products": TIERED_PRODUCTS},
+    )
+
+    result = await generate_payment_link(
+        "new-woman",
+        "5511999990001",
+        customer_name="Maria Silva",
+        customer_document=VALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+        billing_type="PIX",
+        quantity=3,
+    )
+
+    assert result == "https://asaas.test/i/pay_123"
+    payment_call = fake_client.calls[2]
+    assert payment_call["json"]["value"] == 384.0
 
 
 @pytest.mark.asyncio

@@ -50,3 +50,51 @@ async def test_guard_blocks_alpha_pulse_for_livia():
 
     assert "Alpha Pulse" in result
     assert "Caio" in result
+
+
+@pytest.mark.asyncio
+async def test_guard_blocks_new_woman_for_caio():
+    generator = make_guarded_payment_link_generator("caio-alpha-pulse", {"products": {}})
+
+    result = await generator(
+        product_id="new-woman-1",
+        customer_phone="5511999990002",
+        customer_name="Joao Souza",
+        customer_document=VALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+        buying_intent_evidence="quero fechar agora",
+    )
+
+    assert "New Woman" in result
+    assert "Livia" in result
+
+
+@pytest.mark.asyncio
+async def test_guard_allows_alpha_pulse_tiered_for_caio():
+    generator = make_guarded_payment_link_generator(
+        "caio-alpha-pulse",
+        {
+            "products": {
+                "alpha-pulse": {
+                    "product_id": "ap-001",
+                    "card_markup_pct": 10,
+                    "unit_price_tiers_pix_cents": [
+                        {"min_qty": 1, "max_qty": 1, "unit_cents": 14900},
+                        {"min_qty": 2, "max_qty": 4, "unit_cents": 12800},
+                        {"min_qty": 5, "max_qty": None, "unit_cents": 11990},
+                    ],
+                }
+            }
+        },
+    )
+
+    # missing checkout data -> not a blocked_product, asks for data (no Asaas config)
+    result = await generator(
+        product_id="alpha-pulse",
+        customer_phone="5511999990002",
+        buying_intent_evidence="quero fechar agora",
+        quantity=3,
+    )
+
+    assert "New Woman" not in result
+    assert "customer_name" in result

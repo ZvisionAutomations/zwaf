@@ -39,7 +39,7 @@ def test_livia_only_exposes_new_woman_payment_products():
     cfg = _load("livia-raiz-vital")
 
     products = set(cfg.payment["products"])
-    assert products == {"new-woman-1", "new-woman-2", "new-woman-3"}
+    assert products == {"new-woman"}
     assert set(cfg.payment["products"]).isdisjoint({"alpha-pulse-1", "alpha-pulse-2", "alpha-pulse-3"})
 
 
@@ -47,8 +47,8 @@ def test_caio_only_exposes_alpha_pulse_payment_products():
     cfg = _load("caio-alpha-pulse")
 
     products = set(cfg.payment["products"])
-    assert products == {"alpha-pulse-1", "alpha-pulse-2", "alpha-pulse-3"}
-    assert set(cfg.payment["products"]).isdisjoint({"new-woman-1", "new-woman-2", "new-woman-3"})
+    assert products == {"alpha-pulse"}
+    assert set(cfg.payment["products"]).isdisjoint({"new-woman", "new-woman-1"})
 
 
 def test_knowledge_files_are_isolated_by_tenant():
