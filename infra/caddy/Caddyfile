@@ -1,0 +1,10 @@
+# ZWAF public HTTPS reverse proxy.
+# Domains must resolve to the VPS Elastic IP before Caddy can issue certificates.
+
+{$ZWAF_PUBLIC_DOMAIN} {
+	reverse_proxy zwaf-api:8000
+}
+
+{$EVOLUTION_PUBLIC_DOMAIN} {
+	reverse_proxy evolution-api:8080
+}
