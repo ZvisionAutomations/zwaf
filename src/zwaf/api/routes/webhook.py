@@ -140,9 +140,56 @@ async def _process_and_respond(team, message, phone, session_id, lead_id, tenant
                 "latency_ms": round(response.latency_ms),
             },
         )
+        _record_observability(
+            tenant_id=tenant_id,
+            phone=phone,
+            agent_used=response.agent_used,
+            latency_ms=response.latency_ms,
+            status="ok",
+        )
         await team.send_response(phone=phone, text=response.response, session_id=session_id)
     except Exception as e:
         logger.error(
             "Failed to process webhook message",
             extra={"tenant_id": tenant_id, "error": str(e)},
         )
+        _record_observability(
+            tenant_id=tenant_id,
+            phone=phone,
+            agent_used="error",
+            latency_ms=0.0,
+            status="error",
+            error=str(e),
+        )
+
+
+def _record_observability(
+    *,
+    tenant_id: str,
+    phone: str,
+    agent_used: str,
+    latency_ms: float,
+    status: str,
+    error: str = "",
+) -> None:
+    """Best-effort Langfuse trace; never affects the customer flow."""
+    try:
+        from zwaf.observability import langfuse as obs
+
+        obs.record_conversation(
+            name="whatsapp-conversation",
+            session_seed=f"{tenant_id}:{phone}",
+            user_seed=phone,
+            tags=[f"tenant:{tenant_id}", "feature:whatsapp-agent"],
+            metadata={
+                "tenant_id": tenant_id,
+                "agent_used": agent_used,
+                "feature": "whatsapp-agent",
+                "phone_tail": obs.phone_tail(phone),
+                "latency_ms": round(latency_ms),
+                "status": status,
+                "error": obs.mask_pii(error) if error else "",
+            },
+        )
+    except Exception:
+        pass
