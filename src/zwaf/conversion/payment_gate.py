@@ -23,6 +23,7 @@ def make_guarded_payment_link_generator(
         delivery_address: Optional[dict[str, Any]] = None,
         buying_intent_evidence: str = "",
         billing_type: str = "",
+        quantity: int = 0,
     ) -> str:
         checkout = validate_checkout_ready(
             tenant_id=tenant_id,
@@ -33,7 +34,10 @@ def make_guarded_payment_link_generator(
         )
         if not checkout.ok:
             if checkout.code == "blocked_product":
-                return "Nao vou gerar esse link por aqui. Alpha Pulse precisa ser atendido pelo Caio."
+                return checkout.message or (
+                    "Nao vou gerar esse link por aqui. Esse produto e atendido por "
+                    "outro consultor da Raiz Vital."
+                )
             missing = ", ".join(checkout.missing_fields)
             return (
                 "Antes de te mandar o link, preciso completar o pedido com "
@@ -54,6 +58,7 @@ def make_guarded_payment_link_generator(
                 customer_document=customer_document,
                 delivery_address=delivery_address,
                 billing_type=billing_type,
+                quantity=quantity,
             )
 
         if decision.action == ConversionAction.TRANSFER_AGENT:

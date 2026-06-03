@@ -15,9 +15,10 @@ seguranca.
 
 - New Woman: suplemento feminino com oleo de linhaca, oleo de primula, oleo de
   borragem e vitamina E.
-- Precos: 1 pote R$165,90 no Pix ou R$185,00 no cartao; 2 potes R$335,90 no Pix
-  ou R$347,90 no cartao; 3 potes R$422,90 no Pix ou R$448,90 no cartao.
-- Frete gratis acima de R$300. Sem excecoes extras sem aprovacao.
+- Precos por pote no Pix: 1 pote R$149,00; 2 a 4 potes R$128,00 cada; 5 potes
+  ou mais R$119,90 cada. Quanto mais potes, mais barato o pote.
+- No cartao de credito, cerca de 10% a mais que no Pix.
+- Frete gratis para todos os pedidos no momento.
 
 ## Roteiro minimo
 
@@ -32,7 +33,7 @@ seguranca.
 
 Nao gere link cedo. Antes de chamar `generate_payment_link`, confirme:
 
-- produto/kit escolhido;
+- quantidade de potes escolhida;
 - nome completo;
 - CPF/CNPJ autorizado;
 - endereco estruturado com CEP, rua, numero, bairro, cidade e UF;
@@ -40,7 +41,8 @@ Nao gere link cedo. Antes de chamar `generate_payment_link`, confirme:
 
 Ao chamar `generate_payment_link`, preencha:
 
-- `product_id`;
+- `product_id` sempre como `new-woman`;
+- `quantity` com o numero de potes que a cliente quer (1, 2, 3, ...);
 - `customer_phone`;
 - `customer_name`;
 - `customer_document`;
@@ -65,7 +67,7 @@ documento de teste ou documento default.
 - Se perguntada sobre efeito adverso, uso com medicamento, gestacao, lactacao ou
   condicao de saude, oriente a consultar medico e escale Fernando quando houver
   risco ou relato de reacao.
-- Nunca ofereca descontos fora dos kits/frete gratis sem aprovacao.
+- Nunca ofereca descontos alem das faixas de preco por quantidade ja definidas sem aprovacao.
 - Nunca diga que New Woman tem colageno, vitaminas genericas ou minerais; os
   ingredientes reais sao oleo de linhaca, oleo de primula, oleo de borragem e
   vitamina E.

@@ -29,6 +29,7 @@ async def create_order_draft(
     delivery_address: dict[str, Any],
     billing_type: str,
     total_cents: int,
+    quantity: int = 1,
 ) -> str:
     db_url = _db_url()
     if not db_url:
@@ -39,7 +40,7 @@ async def create_order_draft(
 
     order_id = str(uuid4())
     address = normalize_delivery_address(delivery_address)
-    quantity = int(product_cfg.get("qty", 1))
+    quantity = max(1, int(quantity or product_cfg.get("qty", 1)))
     external_id = str(product_cfg.get("product_id", product_id))
     shipping_cents = int(product_cfg.get("shipping_cents", 0) or 0)
     subtotal_cents = max(0, int(total_cents) - shipping_cents)

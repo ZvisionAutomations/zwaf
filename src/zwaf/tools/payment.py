@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 import logging
 import os
+import re
 from typing import Any, Callable, Optional
 
 import httpx
@@ -41,6 +42,7 @@ def make_payment_link_generator(
         customer_document: str = "",
         delivery_address: Optional[dict[str, Any]] = None,
         billing_type: str = "",
+        quantity: int = 0,
     ) -> str:
         """
         Gera link de pagamento via Asaas.
@@ -52,6 +54,8 @@ def make_payment_link_generator(
             customer_document: CPF/CNPJ do cliente, quando disponivel.
             delivery_address: Endereco estruturado para entrega.
             billing_type: PIX, BOLETO ou CREDIT_CARD. Default vem do config/env.
+            quantity: Numero de unidades. Usado no pricing tiered (preco por faixa
+                de quantidade). Se 0, deriva do SKU legado ou do config.
 
         Returns:
             URL do link de pagamento.
@@ -61,10 +65,9 @@ def make_payment_link_generator(
             logger.error("Asaas API key/base URL not configured")
             return "Erro ao gerar link: configuracao de pagamento incompleta."
 
-        product_cfg = _resolve_product(products, product_id)
+        product_cfg, resolved_qty = _resolve_product_and_qty(products, product_id, quantity)
         resolved_billing_type = _resolve_billing_type(billing_type, cfg)
-        price_cents = _resolve_price_cents(product_cfg, resolved_billing_type)
-        quantity = product_cfg.get("qty", 1)
+        price_cents = _total_cents(product_cfg, resolved_qty, resolved_billing_type)
         product_slug = _product_slug(product_id)
         external_id = product_cfg.get("product_id", product_id)
         product_name = _PRODUCT_NAMES.get(product_slug, product_id)
@@ -97,6 +100,7 @@ def make_payment_link_generator(
             delivery_address=address,
             billing_type=resolved_billing_type,
             total_cents=price_cents,
+            quantity=resolved_qty,
         )
         if _db_required_for_checkout() and not order_id:
             return "Erro ao gerar link: pedido nao foi registrado com seguranca."
@@ -125,7 +129,7 @@ def make_payment_link_generator(
                         external_id=external_id,
                         product_name=product_name,
                         product_description=product_description,
-                        quantity=quantity,
+                        quantity=resolved_qty,
                         price_cents=price_cents,
                         billing_type=resolved_billing_type,
                         due_days=int(cfg.get("due_days", 2)),
@@ -155,20 +159,62 @@ def make_payment_link_generator(
     return generate_payment_link
 
 
-def _resolve_product(products: dict[str, Any], product_id: str) -> dict[str, Any]:
-    if product_id in products:
-        return products[product_id]
+def _split_product_qty(product_id: str) -> tuple[str, Optional[int]]:
+    """Split a SKU like 'new-woman-2' into ('new-woman', 2). No numeric suffix -> (slug, None)."""
+    normalized = (product_id or "").replace("_", "-").lower()
+    match = re.match(r"^(.*?)-(\d+)$", normalized)
+    if match:
+        return match.group(1), int(match.group(2))
+    return normalized, None
 
-    one_unit_key = f"{product_id}-1"
-    if one_unit_key in products:
-        return products[one_unit_key]
 
-    normalized = product_id.replace("_", "-").lower()
-    if normalized in products:
-        return products[normalized]
+def _resolve_product_and_qty(
+    products: dict[str, Any],
+    product_id: str,
+    quantity: int,
+) -> tuple[dict[str, Any], int]:
+    """Resolve product config and quantity for both tiered and legacy package formats."""
+    slug, suffix_qty = _split_product_qty(product_id)
+    cfg = (
+        products.get(product_id)
+        or products.get(slug)
+        or products.get(f"{slug}-1")
+        or {}
+    )
+    if quantity and int(quantity) > 0:
+        resolved_qty = int(quantity)
+    elif suffix_qty:
+        resolved_qty = suffix_qty
+    else:
+        resolved_qty = int(cfg.get("qty", 1))
+    return cfg, max(1, resolved_qty)
 
-    normalized_one_unit_key = f"{normalized}-1"
-    return products.get(normalized_one_unit_key, {})
+
+def _tier_unit_cents(tiers: list[dict[str, Any]], qty: int) -> Optional[int]:
+    """Return the Pix unit price (cents) for the tier matching qty."""
+    for tier in tiers:
+        min_qty = int(tier.get("min_qty", 1))
+        max_qty = tier.get("max_qty")
+        if qty >= min_qty and (max_qty is None or qty <= int(max_qty)):
+            unit = tier.get("unit_cents")
+            return int(unit) if unit else None
+    return None
+
+
+def _total_cents(product_cfg: dict[str, Any], qty: int, billing_type: str) -> Optional[int]:
+    """Order total in cents: tiered unit pricing when configured, else legacy package price."""
+    tiers = product_cfg.get("unit_price_tiers_pix_cents")
+    if tiers:
+        unit_pix = _tier_unit_cents(tiers, qty)
+        if not unit_pix:
+            return None
+        if billing_type == "CREDIT_CARD":
+            markup_pct = product_cfg.get("card_markup_pct", 0) or 0
+            unit = int(round(unit_pix * (100 + markup_pct) / 100))
+        else:
+            unit = int(unit_pix)
+        return unit * qty
+    return _resolve_price_cents(product_cfg, billing_type)
 
 
 def _asaas_config(payment_config: dict[str, Any]) -> dict[str, str]:
