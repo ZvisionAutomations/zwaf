@@ -36,13 +36,26 @@ class PhoneNumberEntry:
     instance: str
 
 
+_MAX_DELAY_MS = 60_000
+
+
+@dataclass(frozen=True)
+class TypingSimulationConfig:
+    enabled: bool = True
+    min_ms: int = 1000
+    max_ms: int = 5000
+    chars_per_second: int = 50
+    jitter_ms: int = 0
+
+
 @dataclass
 class WhatsAppConfig:
     evolution_api_url: str
     evolution_api_key: str
     phone_numbers: list[PhoneNumberEntry]
     messages_per_minute: int = 10
-    typing_simulation: bool = True
+    typing_simulation: TypingSimulationConfig = field(default_factory=TypingSimulationConfig)
+    send_text_delay_ms: Optional[int] = None
     warm_up_mode: bool = False
     warm_up_start_date: Optional[str] = None  # ISO date string
 
@@ -168,7 +181,10 @@ class TenantConfig:
             evolution_api_key=wa_raw["evolution_api_key"],
             phone_numbers=phone_numbers,
             messages_per_minute=wa_raw.get("messages_per_minute", 10),
-            typing_simulation=wa_raw.get("typing_simulation", True),
+            typing_simulation=_parse_typing_simulation(wa_raw.get("typing_simulation", True)),
+            send_text_delay_ms=_parse_optional_delay_ms(
+                wa_raw.get("send_text_delay_ms"), "send_text_delay_ms"
+            ),
             warm_up_mode=warm_up_mode,
             warm_up_start_date=warm_up_start_date,
         )
@@ -210,6 +226,68 @@ def _substitute_env_vars(value: Any) -> Any:
         return {k: _substitute_env_vars(v) for k, v in value.items()}
     if isinstance(value, list):
         return [_substitute_env_vars(item) for item in value]
+    return value
+
+
+def _parse_typing_simulation(value: Any) -> TypingSimulationConfig:
+    if isinstance(value, bool):
+        return TypingSimulationConfig(enabled=value)
+    if value is None:
+        return TypingSimulationConfig()
+    if not isinstance(value, dict):
+        raise TenantLoadError(
+            "whatsapp.typing_simulation must be a boolean or object"
+        )
+
+    enabled = value.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise TenantLoadError("whatsapp.typing_simulation.enabled must be boolean")
+
+    min_ms = _parse_delay_ms(
+        value.get("min_ms", 1000), "whatsapp.typing_simulation.min_ms"
+    )
+    max_ms = _parse_delay_ms(
+        value.get("max_ms", 5000), "whatsapp.typing_simulation.max_ms"
+    )
+    if min_ms > max_ms:
+        raise TenantLoadError(
+            "whatsapp.typing_simulation.min_ms must be <= max_ms"
+        )
+
+    chars_per_second = value.get("chars_per_second", 50)
+    if (
+        isinstance(chars_per_second, bool)
+        or not isinstance(chars_per_second, int)
+        or chars_per_second <= 0
+    ):
+        raise TenantLoadError(
+            "whatsapp.typing_simulation.chars_per_second must be a positive integer"
+        )
+
+    jitter_ms = _parse_delay_ms(
+        value.get("jitter_ms", 0), "whatsapp.typing_simulation.jitter_ms"
+    )
+
+    return TypingSimulationConfig(
+        enabled=enabled,
+        min_ms=min_ms,
+        max_ms=max_ms,
+        chars_per_second=chars_per_second,
+        jitter_ms=jitter_ms,
+    )
+
+
+def _parse_optional_delay_ms(value: Any, field_name: str) -> Optional[int]:
+    if value is None:
+        return None
+    return _parse_delay_ms(value, field_name)
+
+
+def _parse_delay_ms(value: Any, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TenantLoadError(f"{field_name} must be an integer in milliseconds")
+    if value < 0 or value > _MAX_DELAY_MS:
+        raise TenantLoadError(f"{field_name} must be between 0 and {_MAX_DELAY_MS}")
     return value
 
 

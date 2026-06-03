@@ -1,15 +1,17 @@
-"""Payment Tool - integracao Abacate Pay com closure por tenant."""
+"""Payment Tool - integracao Asaas com closure por tenant."""
 from __future__ import annotations
 
+from datetime import date, timedelta
 import logging
 import os
 from typing import Any, Callable, Optional
 
 import httpx
 
-logger = logging.getLogger("zwaf.tools.payment")
+from zwaf.conversion.checkout_policy import normalize_delivery_address, validate_checkout_ready
+from zwaf.memory.order_store import create_order_draft, mark_order_payment_created
 
-_ABACATE_PAY_BASE = "https://api.abacatepay.com/v1"
+logger = logging.getLogger("zwaf.tools.payment")
 
 _PRODUCT_NAMES = {
     "new-woman": "New Woman",
@@ -29,76 +31,121 @@ def make_payment_link_generator(
     """
     Factory: retorna uma funcao de geracao de link de pagamento pre-configurada para o tenant.
     """
-    products = (payment_config or {}).get("products", {})
+    cfg = payment_config or {}
+    products = cfg.get("products", {})
 
-    async def generate_payment_link(product_id: str, customer_phone: str) -> str:
+    async def generate_payment_link(
+        product_id: str,
+        customer_phone: str,
+        customer_name: str = "",
+        customer_document: str = "",
+        delivery_address: Optional[dict[str, Any]] = None,
+        billing_type: str = "",
+    ) -> str:
         """
-        Gera link de pagamento via Abacate Pay.
+        Gera link de pagamento via Asaas.
 
         Args:
             product_id: ID do produto ou SKU, ex: "new-woman", "new-woman-1"
             customer_phone: Numero do cliente com DDI, ex: 5511999990001
+            customer_name: Nome do cliente, quando disponivel.
+            customer_document: CPF/CNPJ do cliente, quando disponivel.
+            delivery_address: Endereco estruturado para entrega.
+            billing_type: PIX, BOLETO ou CREDIT_CARD. Default vem do config/env.
 
         Returns:
-            URL do link de pagamento Pix
+            URL do link de pagamento.
         """
-        api_key = os.getenv("ABACATE_PAY_KEY", "")
-        if not api_key:
-            logger.warning("ABACATE_PAY_KEY not configured - returning mock link")
-            return f"https://pay.abacatepay.com/mock/{product_id}/{customer_phone[-4:]}"
+        asaas = _asaas_config(cfg)
+        if not asaas["api_key"] or not asaas["base_url"]:
+            logger.error("Asaas API key/base URL not configured")
+            return "Erro ao gerar link: configuracao de pagamento incompleta."
 
         product_cfg = _resolve_product(products, product_id)
-        price_cents = product_cfg.get("price_cents_pix")
+        resolved_billing_type = _resolve_billing_type(billing_type, cfg)
+        price_cents = _resolve_price_cents(product_cfg, resolved_billing_type)
         quantity = product_cfg.get("qty", 1)
         product_slug = _product_slug(product_id)
         external_id = product_cfg.get("product_id", product_id)
         product_name = _PRODUCT_NAMES.get(product_slug, product_id)
-        return_url = os.getenv("ABACATE_PAY_RETURN_URL", "")
-        completion_url = os.getenv("ABACATE_PAY_COMPLETION_URL", "")
+        product_description = _PRODUCT_DESCRIPTIONS.get(product_slug, product_name)
 
         if not price_cents:
             logger.error("Product '%s' not configured for tenant '%s'", product_id, tenant_id)
             return "Erro ao gerar link: produto nao configurado."
-        if not return_url or not completion_url:
-            logger.error("Abacate Pay return/completion URLs not configured")
-            return "Erro ao gerar link: configuracao de pagamento incompleta."
+
+        checkout = validate_checkout_ready(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            customer_name=customer_name,
+            customer_document=customer_document,
+            delivery_address=delivery_address,
+        )
+        if not checkout.ok:
+            if checkout.code == "blocked_product":
+                return "Nao vou gerar link para esse produto neste atendimento."
+            return "Erro ao gerar link: dados obrigatorios do pedido incompletos."
+
+        address = normalize_delivery_address(delivery_address)
+        order_id = await create_order_draft(
+            tenant_id=tenant_id,
+            lead_phone=customer_phone,
+            product_id=product_id,
+            product_cfg=product_cfg,
+            customer_name=customer_name,
+            customer_document=customer_document,
+            delivery_address=address,
+            billing_type=resolved_billing_type,
+            total_cents=price_cents,
+        )
+        if _db_required_for_checkout() and not order_id:
+            return "Erro ao gerar link: pedido nao foi registrado com seguranca."
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
+                customer_id = await _create_or_reuse_customer(
+                    client=client,
+                    config=asaas,
+                    tenant_id=tenant_id,
+                    customer_phone=customer_phone,
+                    customer_name=customer_name,
+                    customer_document=customer_document,
+                )
+                if not customer_id:
+                    return "Erro ao gerar link de pagamento. Por favor, tente novamente."
+
                 resp = await client.post(
-                    f"{_ABACATE_PAY_BASE}/billing/create",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "frequency": "ONE_TIME",
-                        "methods": ["PIX"],
-                        "products": [
-                            {
-                                "externalId": external_id,
-                                "name": product_name,
-                                "description": _PRODUCT_DESCRIPTIONS.get(product_slug, product_name),
-                                "quantity": quantity,
-                                "price": price_cents,
-                            }
-                        ],
-                        "returnUrl": return_url,
-                        "completionUrl": completion_url,
-                        "customer": {"cellphone": customer_phone},
-                        "externalId": f"{tenant_id}-{customer_phone[-4:]}-{product_id}",
-                        "metadata": {"tenant_id": tenant_id, "product_id": product_id},
-                    },
+                    f"{asaas['base_url']}/payments",
+                    headers=_asaas_headers(asaas),
+                    json=_payment_payload(
+                        tenant_id=tenant_id,
+                        customer_id=customer_id,
+                        customer_phone=customer_phone,
+                        product_id=product_id,
+                        external_id=external_id,
+                        product_name=product_name,
+                        product_description=product_description,
+                        quantity=quantity,
+                        price_cents=price_cents,
+                        billing_type=resolved_billing_type,
+                        due_days=int(cfg.get("due_days", 2)),
+                    ),
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                url = data.get("data", {}).get("url", "")
+                url = _extract_payment_url(data)
                 if url:
+                    await mark_order_payment_created(
+                        order_id=order_id,
+                        asaas_customer_id=customer_id,
+                        asaas_payment_id=str(data.get("id", "")),
+                        payment_url=url,
+                    )
                     return url
-                logger.error("Abacate Pay returned no URL: %s", data)
+                logger.error("Asaas returned no payment URL: %s", _redact(data))
                 return "Erro ao gerar link. Tente novamente em instantes."
         except httpx.HTTPStatusError as e:
-            logger.error("Abacate Pay HTTP error %s: %s", e.response.status_code, e.response.text[:200])
+            logger.error("Asaas HTTP error %s: %s", e.response.status_code, e.response.text[:200])
             return "Erro ao gerar link de pagamento. Por favor, tente novamente."
         except Exception as e:
             logger.error("Payment link generation failed: %s", e)
@@ -124,6 +171,197 @@ def _resolve_product(products: dict[str, Any], product_id: str) -> dict[str, Any
     return products.get(normalized_one_unit_key, {})
 
 
+def _asaas_config(payment_config: dict[str, Any]) -> dict[str, str]:
+    base_url = _config_value(payment_config, "base_url", "ASAAS_BASE_URL")
+    return {
+        "api_key": _config_value(payment_config, "api_key", "ASAAS_API_KEY"),
+        "base_url": base_url.rstrip("/"),
+        "user_agent": _config_value(payment_config, "user_agent", "ASAAS_USER_AGENT", "zwaf-raiz-vital"),
+        "default_customer_cpf_cnpj": _config_value(
+            payment_config,
+            "default_customer_cpf_cnpj",
+            "ASAAS_DEFAULT_CUSTOMER_CPF_CNPJ",
+        ),
+    }
+
+
+def _db_required_for_checkout() -> bool:
+    if os.getenv("DATABASE_URL", ""):
+        return True
+    return os.getenv("ZWAF_REQUIRE_ORDER_PERSISTENCE", "").lower() in {"1", "true", "yes"}
+
+
+def _config_value(
+    payment_config: dict[str, Any],
+    key: str,
+    env_key: str,
+    default: str = "",
+) -> str:
+    value = payment_config.get(key) or os.getenv(env_key, default)
+    return str(value).strip()
+
+
+def _asaas_headers(config: dict[str, str]) -> dict[str, str]:
+    return {
+        "Content-Type": "application/json",
+        "User-Agent": config["user_agent"],
+        "access_token": config["api_key"],
+    }
+
+
+def _customer_external_reference(tenant_id: str, customer_phone: str) -> str:
+    return f"{tenant_id}:{customer_phone}"
+
+
+async def _find_customer_by_external_reference(
+    client: httpx.AsyncClient,
+    config: dict[str, str],
+    external_reference: str,
+) -> dict[str, Any]:
+    resp = await client.get(
+        f"{config['base_url']}/customers",
+        headers=_asaas_headers(config),
+        params={"externalReference": external_reference, "limit": 1},
+    )
+    resp.raise_for_status()
+    data = resp.json().get("data", [])
+    if isinstance(data, list) and data:
+        first = data[0]
+        if isinstance(first, dict):
+            return first
+    return {}
+
+
+async def _update_customer_document(
+    client: httpx.AsyncClient,
+    config: dict[str, str],
+    customer_id: str,
+    customer_phone: str,
+    customer_name: str,
+    customer_document: str,
+) -> str:
+    payload = {
+        "name": customer_name or f"Cliente {customer_phone[-4:]}",
+        "mobilePhone": customer_phone,
+        "cpfCnpj": customer_document,
+    }
+    resp = await client.put(
+        f"{config['base_url']}/customers/{customer_id}",
+        headers=_asaas_headers(config),
+        json=payload,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return str(data.get("id") or customer_id)
+
+
+async def _create_or_reuse_customer(
+    client: httpx.AsyncClient,
+    config: dict[str, str],
+    tenant_id: str,
+    customer_phone: str,
+    customer_name: str,
+    customer_document: str,
+) -> str:
+    external_reference = _customer_external_reference(tenant_id, customer_phone)
+    document = customer_document
+    existing = await _find_customer_by_external_reference(client, config, external_reference)
+    if existing:
+        customer_id = str(existing.get("id", ""))
+        if customer_id and document and existing.get("cpfCnpj") != document:
+            return await _update_customer_document(
+                client=client,
+                config=config,
+                customer_id=customer_id,
+                customer_phone=customer_phone,
+                customer_name=customer_name,
+                customer_document=document,
+            )
+        return customer_id
+
+    if not document:
+        logger.error("Asaas customer document missing for tenant '%s'", tenant_id)
+        return ""
+
+    payload = {
+        "name": customer_name or f"Cliente {customer_phone[-4:]}",
+        "mobilePhone": customer_phone,
+        "externalReference": external_reference,
+        "cpfCnpj": document,
+    }
+
+    resp = await client.post(
+        f"{config['base_url']}/customers",
+        headers=_asaas_headers(config),
+        json=payload,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    customer_id = data.get("id", "")
+    if not customer_id:
+        logger.error("Asaas customer response without id: %s", _redact(data))
+    return customer_id
+
+
+def _payment_payload(
+    tenant_id: str,
+    customer_id: str,
+    customer_phone: str,
+    product_id: str,
+    external_id: str,
+    product_name: str,
+    product_description: str,
+    quantity: int,
+    price_cents: int,
+    billing_type: str,
+    due_days: int,
+) -> dict[str, Any]:
+    due_date = date.today() + timedelta(days=max(0, due_days))
+    return {
+        "customer": customer_id,
+        "billingType": billing_type,
+        "value": round(price_cents / 100, 2),
+        "dueDate": due_date.isoformat(),
+        "description": f"{product_name} ({quantity} un.) - {product_description}",
+        "externalReference": f"{tenant_id}:{customer_phone}:{product_id}:{external_id}",
+    }
+
+
+def _resolve_billing_type(requested: str, payment_config: dict[str, Any]) -> str:
+    billing_type = (requested or payment_config.get("billing_type") or "PIX").upper()
+    if billing_type not in {"PIX", "BOLETO", "CREDIT_CARD"}:
+        logger.warning("Unsupported Asaas billing type '%s'; falling back to PIX", billing_type)
+        return "PIX"
+    return billing_type
+
+
+def _resolve_price_cents(product_cfg: dict[str, Any], billing_type: str) -> Optional[int]:
+    if billing_type == "CREDIT_CARD":
+        return product_cfg.get("price_cents_card") or product_cfg.get("price_cents_pix")
+    if billing_type == "BOLETO":
+        return product_cfg.get("price_cents_boleto") or product_cfg.get("price_cents_pix")
+    return product_cfg.get("price_cents_pix")
+
+
+def _extract_payment_url(data: dict[str, Any]) -> str:
+    for key in ("invoiceUrl", "bankSlipUrl", "url", "transactionReceiptUrl"):
+        value = data.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _redact(data: Any) -> Any:
+    if isinstance(data, dict):
+        return {
+            key: "***" if key.lower() in {"access_token", "api_key", "token"} else _redact(value)
+            for key, value in data.items()
+        }
+    if isinstance(data, list):
+        return [_redact(item) for item in data]
+    return data
+
+
 def _product_slug(product_id: str) -> str:
     normalized = product_id.replace("_", "-").lower()
     for slug in _PRODUCT_NAMES:
@@ -137,27 +375,27 @@ def make_payment_status_checker() -> Callable:
 
     async def check_payment_status(payment_id: str) -> str:
         """
-        Verifica o status de um pagamento via Abacate Pay.
+        Verifica o status de um pagamento via Asaas.
 
         Args:
-            payment_id: ID do pagamento retornado pelo Abacate Pay
+            payment_id: ID do pagamento retornado pelo Asaas
 
         Returns:
-            Status do pagamento: PAID, PENDING, EXPIRED ou mensagem de erro
+            Status do pagamento retornado pelo Asaas ou mensagem de erro.
         """
-        api_key = os.getenv("ABACATE_PAY_KEY", "")
-        if not api_key:
-            return "UNKNOWN (ABACATE_PAY_KEY nao configurado)"
+        config = _asaas_config({})
+        if not config["api_key"] or not config["base_url"]:
+            return "UNKNOWN (ASAAS_API_KEY/ASAAS_BASE_URL nao configurado)"
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(
-                    f"{_ABACATE_PAY_BASE}/billing/{payment_id}",
-                    headers={"Authorization": f"Bearer {api_key}"},
+                    f"{config['base_url']}/payments/{payment_id}",
+                    headers=_asaas_headers(config),
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                status = data.get("data", {}).get("status", "UNKNOWN")
+                status = data.get("status", "UNKNOWN")
                 return status
         except Exception as e:
             logger.error("Payment status check failed: %s", e)

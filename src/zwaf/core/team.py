@@ -10,10 +10,11 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from zwaf.conversion.checkout_policy import is_opt_out_message
 from zwaf.conversion.intelligence import LeadSignal, analyze_message
 from zwaf.core.router_agent import RouterAgent, RouteResult
 from zwaf.core.tenant import TenantConfig
-from zwaf.memory.lead_store import append_conversion_event
+from zwaf.memory.lead_store import append_conversion_event, mark_opt_out
 from zwaf.tools.whatsapp import WhatsAppTool
 
 logger = logging.getLogger("zwaf.core.team")
@@ -85,6 +86,24 @@ class ZWAFTeam:
                 lead_id=lead_id,
                 latency_ms=(time.monotonic() - start) * 1000,
                 route_result=RouteResult("guard", 1.0),
+            )
+
+        if is_opt_out_message(guard_result.sanitized_input):
+            await mark_opt_out(
+                phone=phone,
+                tenant_id=self._tenant.tenant_id,
+                reason="lead_requested_opt_out",
+            )
+            return TeamResponse(
+                response=(
+                    "Tudo bem, entendi. Vou encerrar o contato por aqui e marcar para "
+                    "nao enviarmos novas mensagens."
+                ),
+                agent_used="opt_out",
+                session_id=session_id,
+                lead_id=lead_id,
+                latency_ms=(time.monotonic() - start) * 1000,
+                route_result=RouteResult("opt_out", 1.0),
             )
 
         # 2. Route
@@ -254,7 +273,12 @@ def build_team(
             api_key=tenant_config.whatsapp.evolution_api_key,
             base_url=tenant_config.whatsapp.evolution_api_url,
             messages_per_minute=tenant_config.whatsapp.messages_per_minute,
-            typing_simulation=tenant_config.whatsapp.typing_simulation,
+            typing_simulation=tenant_config.whatsapp.typing_simulation.enabled,
+            typing_min_ms=tenant_config.whatsapp.typing_simulation.min_ms,
+            typing_max_ms=tenant_config.whatsapp.typing_simulation.max_ms,
+            typing_chars_per_second=tenant_config.whatsapp.typing_simulation.chars_per_second,
+            typing_jitter_ms=tenant_config.whatsapp.typing_simulation.jitter_ms,
+            send_text_delay_ms=tenant_config.whatsapp.send_text_delay_ms,
             warm_up_mode=tenant_config.whatsapp.warm_up_mode,
             warm_up_day=tenant_config.whatsapp.current_warm_up_day,
         )
@@ -263,6 +287,12 @@ def build_team(
             api_key=tenant_config.whatsapp.evolution_api_key,
             base_url=tenant_config.whatsapp.evolution_api_url,
             messages_per_minute=tenant_config.whatsapp.messages_per_minute,
+            typing_simulation=tenant_config.whatsapp.typing_simulation.enabled,
+            typing_min_ms=tenant_config.whatsapp.typing_simulation.min_ms,
+            typing_max_ms=tenant_config.whatsapp.typing_simulation.max_ms,
+            typing_chars_per_second=tenant_config.whatsapp.typing_simulation.chars_per_second,
+            typing_jitter_ms=tenant_config.whatsapp.typing_simulation.jitter_ms,
+            send_text_delay_ms=tenant_config.whatsapp.send_text_delay_ms,
         )
 
     # Router com purchase_history_fn para detectar clientes recorrentes

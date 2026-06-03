@@ -20,20 +20,33 @@
     "warm_up_mode": true,
     "warm_up_start_date": "${WA_WARMUP_START_DATE}",
     "messages_per_minute": 10,
-    "typing_simulation": true
+    "typing_simulation": {
+      "enabled": true,
+      "min_ms": 1000,
+      "max_ms": 5000,
+      "chars_per_second": 50,
+      "jitter_ms": 0
+    },
+    "send_text_delay_ms": null
   },
 
   "payment": {
-    "provider": "abacate_pay",
-    "api_key": "${ABACATE_PAY_KEY}",
-    "webhook_secret": "${ABACATE_PAY_WEBHOOK_SECRET}",
+    "provider": "asaas",
+    "api_key": "${ASAAS_API_KEY}",
+    "base_url": "${ASAAS_BASE_URL}",
+    "webhook_auth_token": "${ASAAS_WEBHOOK_AUTH_TOKEN}",
+    "user_agent": "${ASAAS_USER_AGENT}",
+    "return_url": "${ASAAS_RETURN_URL}",
+    "completion_url": "${ASAAS_COMPLETION_URL}",
+    "default_customer_cpf_cnpj": "${ASAAS_DEFAULT_CUSTOMER_CPF_CNPJ}",
+    "billing_type": "PIX",
     "products": {
       "alpha-pulse-1": {"qty": 1, "price_cents_card": 18500, "price_cents_pix": 16590, "product_id": "ap-001"},
       "alpha-pulse-2": {"qty": 2, "price_cents_card": 34790, "price_cents_pix": 33590, "product_id": "ap-002"},
       "alpha-pulse-3": {"qty": 3, "price_cents_card": 44890, "price_cents_pix": 42290, "product_id": "ap-003"}
     },
     "free_shipping_above_cents": 30000,
-    "_status": "Conta Abacate Pay precisa ser criada por Fernando. product_ids sao placeholders."
+    "_status": "Conta Asaas precisa ser criada/validada por Fernando. product_ids sao referencias internas."
   },
 
   "inventory": {

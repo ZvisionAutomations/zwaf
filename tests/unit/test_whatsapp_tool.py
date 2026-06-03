@@ -119,6 +119,87 @@ class TestMessageQueue:
 # WhatsAppTool — 429 handler
 # ─────────────────────────────────────────────────────────────
 
+class TestWhatsAppTypingSimulation:
+    def test_default_typing_delay_preserves_current_bounds(self):
+        tool = WhatsAppTool()
+        assert tool._typing_delay_ms(0) == 1000
+        assert tool._typing_delay_ms(49) == 1000
+        assert tool._typing_delay_ms(100) == 2000
+        assert tool._typing_delay_ms(1000) == 5000
+
+    def test_custom_typing_delay_uses_tenant_config(self):
+        tool = WhatsAppTool(
+            typing_min_ms=1500,
+            typing_max_ms=7000,
+            typing_chars_per_second=25,
+            typing_jitter_ms=0,
+        )
+        assert tool._typing_delay_ms(10) == 1500
+        assert tool._typing_delay_ms(100) == 4000
+        assert tool._typing_delay_ms(1000) == 7000
+
+    def test_typing_jitter_is_clamped(self):
+        tool = WhatsAppTool(
+            typing_min_ms=1000,
+            typing_max_ms=2000,
+            typing_chars_per_second=50,
+            typing_jitter_ms=1000,
+        )
+        with patch("zwaf.tools.whatsapp.random.randint", return_value=1000):
+            assert tool._typing_delay_ms(100) == 2000
+
+    @pytest.mark.asyncio
+    async def test_set_typing_posts_configured_delay(self):
+        tool = WhatsAppTool(
+            base_url="http://localhost:8080",
+            api_key="test-key",
+            instance="test-1",
+            typing_min_ms=1500,
+            typing_max_ms=7000,
+            typing_chars_per_second=25,
+        )
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_response = MagicMock()
+            mock_response.raise_for_status = MagicMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            await tool._set_typing("5511999990001", 100)
+
+        _, kwargs = mock_client.post.call_args
+        assert kwargs["json"]["delay"] == 4000
+
+    @pytest.mark.asyncio
+    async def test_send_raw_includes_send_text_delay(self):
+        tool = WhatsAppTool(
+            base_url="http://localhost:8080",
+            api_key="test-key",
+            instance="test-1",
+            send_text_delay_ms=800,
+        )
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_response = MagicMock()
+            mock_response.status_code = 201
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json.return_value = {"key": {"id": "msg-1"}}
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            result = await tool._send_raw("5511999990001", "test message")
+
+        assert result.success is True
+        _, kwargs = mock_client.post.call_args
+        assert kwargs["json"]["delay"] == 800
+
+
 class TestWhatsAppTool429Handler:
     @pytest.mark.asyncio
     async def test_429_triggers_rate_limit_error(self):

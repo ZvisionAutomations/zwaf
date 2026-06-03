@@ -136,6 +136,11 @@ class WhatsAppTool(BaseTool):
         instance: str = "",
         messages_per_minute: int = 10,
         typing_simulation: bool = True,
+        typing_min_ms: int = 1000,
+        typing_max_ms: int = 5000,
+        typing_chars_per_second: int = 50,
+        typing_jitter_ms: int = 0,
+        send_text_delay_ms: Optional[int] = None,
         warm_up_mode: bool = False,
         warm_up_day: Optional[int] = None,
         timeout: float = 10.0,
@@ -148,6 +153,11 @@ class WhatsAppTool(BaseTool):
         self.instance = instance or os.getenv("EVOLUTION_INSTANCE", "zwaf")
         self.messages_per_minute = messages_per_minute
         self.typing_simulation = typing_simulation
+        self.typing_min_ms = typing_min_ms
+        self.typing_max_ms = typing_max_ms
+        self.typing_chars_per_second = typing_chars_per_second
+        self.typing_jitter_ms = typing_jitter_ms
+        self.send_text_delay_ms = send_text_delay_ms
         self.warm_up_mode = warm_up_mode
         self.warm_up_day = warm_up_day
 
@@ -357,6 +367,8 @@ class WhatsAppTool(BaseTool):
         import httpx
         url = f"{self.base_url}/message/sendText/{self.current_instance}"
         payload = {"number": phone, "text": text}
+        if self.send_text_delay_ms is not None:
+            payload["delay"] = self.send_text_delay_ms
         logger.info(
             "Sending WhatsApp via Evolution API",
             extra={"phone_tail": phone[-4:], "length": len(text), "instance": self.current_instance},
@@ -377,15 +389,23 @@ class WhatsAppTool(BaseTool):
     async def _set_typing(self, phone: str, text_length: int) -> None:
         """Envia presença 'composing'. Best-effort — nunca bloqueia o envio."""
         import httpx
-        duration = max(1, min(5, text_length // 50))
+        delay_ms = self._typing_delay_ms(text_length)
         url = f"{self.base_url}/chat/sendPresence/{self.current_instance}"
-        payload = {"number": phone, "presence": "composing", "delay": duration * 1000}
+        payload = {"number": phone, "presence": "composing", "delay": delay_ms}
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
                 resp = await client.post(url, json=payload, headers=self._headers())
                 resp.raise_for_status()
         except Exception:
             pass  # typing indicator é best-effort
+
+    def _typing_delay_ms(self, text_length: int) -> int:
+        base_ms = (max(0, text_length) // self.typing_chars_per_second) * 1000
+        delay_ms = max(self.typing_min_ms, min(self.typing_max_ms, base_ms))
+        if self.typing_jitter_ms:
+            delay_ms += random.randint(-self.typing_jitter_ms, self.typing_jitter_ms)
+            delay_ms = max(self.typing_min_ms, min(self.typing_max_ms, delay_ms))
+        return delay_ms
 
     def _headers(self) -> dict[str, str]:
         return {"apikey": self.api_key, "Content-Type": "application/json"}

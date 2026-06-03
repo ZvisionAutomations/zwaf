@@ -18,7 +18,7 @@ services:
       - zwaf-postgres-data:/var/lib/postgresql/data
       - ./infra/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -47,7 +47,7 @@ services:
       # Banco — Evolution usa schema proprio dentro do mesmo postgres
       DATABASE_ENABLED: "true"
       DATABASE_PROVIDER: "postgresql"
-      DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${EVOLUTION_POSTGRES_DB:-evolution}
       DATABASE_SAVE_DATA_INSTANCE: "true"
       DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
       DATABASE_SAVE_MESSAGE_UPDATE: "true"
@@ -65,6 +65,11 @@ services:
       WEBHOOK_EVENTS_CONTACTS_UPDATE: "false"
       WEBHOOK_EVENTS_CONNECTION_UPDATE: "false"
       WEBHOOK_EVENTS_CALL: "false"
+      # Cache Redis — evita loop de "redis disconnected"
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/6
+      CACHE_REDIS_PREFIX_KEY: evolution_raiz_vital
+      CACHE_REDIS_SAVE_INSTANCES: "false"
     volumes:
       - zwaf-evolution-data:/evolution/instances
     ports:
@@ -72,8 +77,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8080/',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -102,10 +109,13 @@ services:
       CAIO_PERSONAL_WA_NUMBER: ${CAIO_PERSONAL_WA_NUMBER:-}
       INITIAL_STOCK_NEW_WOMAN: ${INITIAL_STOCK_NEW_WOMAN:-510}
       INITIAL_STOCK_ALPHA_PULSE: ${INITIAL_STOCK_ALPHA_PULSE:-275}
-      ABACATE_PAY_KEY: ${ABACATE_PAY_KEY}
-      ABACATE_PAY_WEBHOOK_SECRET: ${ABACATE_PAY_WEBHOOK_SECRET}
-      ABACATE_PAY_RETURN_URL: ${ABACATE_PAY_RETURN_URL}
-      ABACATE_PAY_COMPLETION_URL: ${ABACATE_PAY_COMPLETION_URL}
+      ASAAS_API_KEY: ${ASAAS_API_KEY}
+      ASAAS_BASE_URL: ${ASAAS_BASE_URL}
+      ASAAS_WEBHOOK_AUTH_TOKEN: ${ASAAS_WEBHOOK_AUTH_TOKEN}
+      ASAAS_USER_AGENT: ${ASAAS_USER_AGENT}
+      ASAAS_RETURN_URL: ${ASAAS_RETURN_URL}
+      ASAAS_COMPLETION_URL: ${ASAAS_COMPLETION_URL}
+      ASAAS_DEFAULT_CUSTOMER_CPF_CNPJ: ${ASAAS_DEFAULT_CUSTOMER_CPF_CNPJ:-}
       ESCALATION_PHONE: ${ESCALATION_PHONE}
       ZWAF_API_KEYS: ${ZWAF_API_KEYS}
       CORS_ORIGINS: ${CORS_ORIGINS}

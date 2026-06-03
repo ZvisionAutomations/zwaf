@@ -20,8 +20,13 @@ TENANT_ENV = {
     "WA_NUMBER_2": "5511999990002",
     "WA_INSTANCE_2": "caio-alpha-pulse-1",
     "WA_WARMUP_START_DATE": "2026-05-23",
-    "ABACATE_PAY_KEY": "test-abacate-key",
-    "ABACATE_PAY_WEBHOOK_SECRET": "test-webhook-secret",
+    "ASAAS_API_KEY": "test-asaas-key",
+    "ASAAS_BASE_URL": "https://api-sandbox.asaas.com/v3",
+    "ASAAS_WEBHOOK_AUTH_TOKEN": "test-webhook-token",
+    "ASAAS_USER_AGENT": "zwaf-test",
+    "ASAAS_RETURN_URL": "https://raiz-vital.test/pagamento",
+    "ASAAS_COMPLETION_URL": "https://raiz-vital.test/pagamento/confirmado",
+    "ASAAS_DEFAULT_CUSTOMER_CPF_CNPJ": "",
 }
 
 
