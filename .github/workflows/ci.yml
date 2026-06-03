@@ -73,7 +73,7 @@ jobs:
       WA_INSTANCE_2: test-instance-2
       WA_WARMUP_START_DATE: "2025-01-01"
       ABACATE_PAY_KEY: test_abacate_key
-      ESCALATION_PHONE: "5511980142484"
+      ESCALATION_PHONE: ${{ secrets.ESCALATION_PHONE }}
 
     steps:
       - uses: actions/checkout@v4

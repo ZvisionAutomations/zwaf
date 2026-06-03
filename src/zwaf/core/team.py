@@ -10,10 +10,11 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from zwaf.conversion.checkout_policy import is_opt_out_message
 from zwaf.conversion.intelligence import LeadSignal, analyze_message
 from zwaf.core.router_agent import RouterAgent, RouteResult
 from zwaf.core.tenant import TenantConfig
-from zwaf.memory.lead_store import append_conversion_event
+from zwaf.memory.lead_store import append_conversion_event, mark_opt_out
 from zwaf.tools.whatsapp import WhatsAppTool
 
 logger = logging.getLogger("zwaf.core.team")
@@ -85,6 +86,24 @@ class ZWAFTeam:
                 lead_id=lead_id,
                 latency_ms=(time.monotonic() - start) * 1000,
                 route_result=RouteResult("guard", 1.0),
+            )
+
+        if is_opt_out_message(guard_result.sanitized_input):
+            await mark_opt_out(
+                phone=phone,
+                tenant_id=self._tenant.tenant_id,
+                reason="lead_requested_opt_out",
+            )
+            return TeamResponse(
+                response=(
+                    "Tudo bem, entendi. Vou encerrar o contato por aqui e marcar para "
+                    "nao enviarmos novas mensagens."
+                ),
+                agent_used="opt_out",
+                session_id=session_id,
+                lead_id=lead_id,
+                latency_ms=(time.monotonic() - start) * 1000,
+                route_result=RouteResult("opt_out", 1.0),
             )
 
         # 2. Route

@@ -25,9 +25,10 @@ class FidelizacaoEvent:
     """Evento de fidelizacao para um lead especifico."""
     lead_id: str
     phone: str
-    purchase_date: datetime
+    delivered_at: datetime
     product_id: str
     tenant_id: str
+    kind: str = "delivery_30d_coupon"
 
 
 def build_fidelizacao_agent(
@@ -38,7 +39,7 @@ def build_fidelizacao_agent(
     db_url: str = "",
 ) -> Agent:
     """
-    Fidelizacao: envia mensagem de acompanhamento N dias pos-compra,
+    Fidelizacao: envia mensagem de acompanhamento N dias pos-entrega,
     coleta NPS se habilitado, oferece recompra com incentivo.
     """
     tools = [
@@ -59,7 +60,7 @@ def build_fidelizacao_agent(
 class FidelizacaoScheduler:
     """
     Integra com APScheduler para disparar FidelizacaoAgent
-    automaticamente N dias apos a compra (cron diario as 9h).
+    automaticamente apos eventos de entrega (cron diario as 9h).
 
     Registrado via build_team no lifespan FastAPI.
     """
@@ -103,20 +104,17 @@ class FidelizacaoScheduler:
 
     async def _check_and_dispatch(self) -> None:
         """
-        Verifica payment_events com compra PAID ha exatamente trigger_days dias.
+        Verifica followup_events agendados a partir de entrega/recebimento.
         Para cada lead encontrado, dispara o FidelizacaoAgent uma vez.
-
-        Janela: dia exato (CURRENT_DATE - trigger_days). Cron diario garante cobertura.
         """
         if self._tenant_config.fidelizacao is None:
             return
 
-        trigger_days = self._tenant_config.fidelizacao.get("trigger_days_after_purchase", 30)
         tenant_id = self._tenant_config.tenant_id
 
         logger.info(
             "Fidelizacao check running",
-            extra={"tenant": tenant_id, "trigger_days": trigger_days},
+            extra={"tenant": tenant_id},
         )
 
         if not self._db_url:
@@ -128,23 +126,30 @@ class FidelizacaoScheduler:
             import asyncpg
             conn = await asyncpg.connect(clean_url)
             try:
-                # Busca leads com primeira compra PAID ha trigger_days dias
-                # Usa MIN(created_at) para nao reenviar em recompras
                 rows = await conn.fetch(
                     """
                     SELECT
-                        lead_phone,
-                        product_id,
-                        MIN(created_at) AS first_purchase_date
-                    FROM payment_events
+                        o.lead_phone,
+                        o.product_id,
+                        f.kind,
+                        s.delivered_at
+                    FROM followup_events f
+                    JOIN orders o ON o.id = f.order_id
+                    LEFT JOIN shipments s ON s.order_id = o.id
                     WHERE
-                        tenant_id = $1
-                        AND status = 'PAID'
-                    GROUP BY lead_phone, product_id
-                    HAVING MIN(created_at)::date = (CURRENT_DATE - $2::int)
+                        o.tenant_id = $1
+                        AND f.status = 'scheduled'
+                        AND f.scheduled_for <= NOW()
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM lead_profiles lp
+                            WHERE lp.tenant_id = o.tenant_id
+                              AND lp.phone = o.lead_phone
+                              AND lp.opt_out_at IS NOT NULL
+                        )
+                    ORDER BY f.scheduled_for ASC
                     """,
                     tenant_id,
-                    trigger_days,
                 )
             finally:
                 await conn.close()
@@ -155,7 +160,7 @@ class FidelizacaoScheduler:
         if not rows:
             logger.info(
                 "No fidelizacao events today",
-                extra={"tenant": tenant_id, "trigger_days": trigger_days},
+                extra={"tenant": tenant_id},
             )
             return
 
@@ -168,7 +173,8 @@ class FidelizacaoScheduler:
         for row in rows:
             phone = row["lead_phone"]
             product_id = row["product_id"]
-            session_id = f"fidelizacao_{tenant_id}_{phone}_{trigger_days}d"
+            kind = row["kind"]
+            session_id = f"fidelizacao_{tenant_id}_{phone}_{kind}"
 
             try:
                 agent = build_fidelizacao_agent(
@@ -180,16 +186,47 @@ class FidelizacaoScheduler:
                 )
                 # Mensagem interna aciona o prompt de fidelizacao
                 trigger_message = (
-                    f"[FIDELIZACAO] Lead completou {trigger_days} dias desde a compra de {product_id}. "
-                    f"Iniciar fluxo de fidelizacao conforme prompt."
+                    f"[FIDELIZACAO] Evento {kind} para {product_id}. "
+                    f"Iniciar fluxo de fidelizacao conforme entrega/recebimento."
                 )
                 await agent.arun(trigger_message)
+                await self._mark_followup_sent(phone=phone, product_id=product_id, kind=kind)
                 logger.info(
                     "Fidelizacao dispatched",
-                    extra={"phone_tail": phone[-4:], "product_id": product_id},
+                    extra={"phone_tail": phone[-4:], "product_id": product_id, "kind": kind},
                 )
             except Exception as e:
                 logger.error(
                     "Fidelizacao dispatch failed for lead",
                     extra={"phone_tail": phone[-4:], "error": str(e)},
                 )
+
+    async def _mark_followup_sent(self, phone: str, product_id: str, kind: str) -> None:
+        if not self._db_url:
+            return
+        clean_url = self._db_url.replace("+asyncpg", "")
+        try:
+            import asyncpg
+            conn = await asyncpg.connect(clean_url)
+            try:
+                await conn.execute(
+                    """
+                    UPDATE followup_events f
+                    SET status = 'sent', sent_at = NOW(), updated_at = NOW()
+                    FROM orders o
+                    WHERE f.order_id = o.id
+                      AND o.tenant_id = $1
+                      AND o.lead_phone = $2
+                      AND o.product_id = $3
+                      AND f.kind = $4
+                      AND f.status = 'scheduled'
+                    """,
+                    self._tenant_config.tenant_id,
+                    phone,
+                    product_id,
+                    kind,
+                )
+            finally:
+                await conn.close()
+        except Exception as e:
+            logger.warning("Fidelizacao followup update failed: %s", e)

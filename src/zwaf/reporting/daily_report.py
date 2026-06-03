@@ -20,6 +20,7 @@ async def get_daily_metrics(conn: "asyncpg.Connection", tenant_id: str) -> dict:
     Retorna:
     - conversations_today: int
     - sales_today: int
+    - conversion_rate: float
     - revenue_today_cents: int
     - total_sales_all_time: int
     """
@@ -36,10 +37,13 @@ async def get_daily_metrics(conn: "asyncpg.Connection", tenant_id: str) -> dict:
         "SELECT COUNT(*) FROM payment_events WHERE tenant_id = $1 AND status = 'PAID'",
         tenant_id,
     )
+    conversations_count = int(conversations or 0)
+    sales_count = int(row[0] or 0) if row else 0
     return {
-        "conversations_today": int(conversations or 0),
-        "sales_today": int(row[0] or 0),
-        "revenue_today_cents": int(row[1] or 0),
+        "conversations_today": conversations_count,
+        "sales_today": sales_count,
+        "conversion_rate": (sales_count / conversations_count) if conversations_count else 0.0,
+        "revenue_today_cents": int(row[1] or 0) if row else 0,
         "total_sales_all_time": int(total or 0),
     }
 
@@ -57,6 +61,12 @@ def _count(value: Any) -> str:
     return str(int(value))
 
 
+def _percent(value: Any) -> str:
+    if value is None:
+        return UNAVAILABLE
+    return f"{float(value) * 100:.1f}%".replace(".", ",")
+
+
 def _stock(metrics: dict, initial_stock: int) -> str:
     total_sales = metrics.get("total_sales_all_time")
     if total_sales is None:
@@ -70,6 +80,7 @@ def format_report(metrics: dict, date: str, initial_stock: int = 600) -> str:
     return (
         f"*Raiz Vital - Relatorio {date}*\n\n"
         f"Conversas hoje: {_count(metrics.get('conversations_today'))}\n"
+        f"Taxa de conversao: {_percent(metrics.get('conversion_rate'))}\n"
         f"Vendas confirmadas: {_count(metrics.get('sales_today'))}\n"
         f"Receita do dia: {revenue_str}\n"
         f"Estoque restante: {_stock(metrics, initial_stock)}\n\n"
@@ -81,6 +92,7 @@ def format_report(metrics: dict, date: str, initial_stock: int = 600) -> str:
 def _unavailable_metrics() -> dict:
     return {
         "conversations_today": None,
+        "conversion_rate": None,
         "sales_today": None,
         "revenue_today_cents": None,
         "total_sales_all_time": None,

@@ -38,7 +38,7 @@ _STATUS_MAP = {
 def _verify_auth_token(received_token: str, expected_token: str) -> bool:
     """Verifica auth token configurado no webhook Asaas."""
     if not expected_token:
-        return True  # Dev/test mode sem token configurado.
+        return os.getenv("ENV", "").lower() != "production"
     return received_token == expected_token
 
 
@@ -78,7 +78,17 @@ async def receive_payment_webhook(
         return {"status": "ignored", "event": event}
 
     payment_id = payment.get("id", "")
+    provider_event_id = _provider_event_id(body, event, payment_id)
     external_reference = payment.get("externalReference", "")
+    reference_tenant = _reference_tenant(external_reference)
+    if reference_tenant and reference_tenant != tenant_id:
+        logger.warning(
+            "Asaas webhook tenant mismatch: route=%s reference=%s",
+            tenant_id,
+            reference_tenant,
+        )
+        raise HTTPException(status_code=400, detail="Tenant mismatch")
+
     lead_phone, product_id = _parse_external_reference(external_reference)
     amount_cents = _amount_to_cents(payment.get("value", 0))
 
@@ -100,11 +110,15 @@ async def receive_payment_webhook(
     try:
         conn = await asyncpg.connect(db_url)
         try:
-            await conn.execute(
+            insert_status = await conn.execute(
                 """
                 INSERT INTO payment_events
-                    (tenant_id, payment_id, lead_phone, product_id, amount_cents, status, raw_payload)
-                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+                    (
+                        tenant_id, payment_id, lead_phone, product_id,
+                        amount_cents, status, raw_payload, provider,
+                        provider_event_id
+                    )
+                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
                 ON CONFLICT DO NOTHING
                 """,
                 tenant_id,
@@ -114,7 +128,18 @@ async def receive_payment_webhook(
                 amount_cents,
                 status,
                 json.dumps(body),
+                "asaas",
+                provider_event_id,
             )
+
+            if not _inserted(insert_status):
+                logger.info(
+                    "Duplicate Asaas payment webhook ignored",
+                    extra={"tenant_id": tenant_id, "payment_id": payment_id},
+                )
+                return {"status": "accepted_duplicate"}
+
+            await _sync_order_status(conn, tenant_id, payment_id, status)
 
             if event in _PAID_EVENTS and lead_phone:
                 purchase_entry = json.dumps(
@@ -153,6 +178,47 @@ async def receive_payment_webhook(
     return {"status": "accepted"}
 
 
+async def _sync_order_status(
+    conn: Any,
+    tenant_id: str,
+    payment_id: str,
+    status: str,
+) -> None:
+    """Reflect Asaas payment status onto the matching order (by asaas_payment_id)."""
+    if not payment_id:
+        return
+    if status == "PAID":
+        await conn.execute(
+            """
+            UPDATE orders
+            SET status = 'paid', paid_at = COALESCE(paid_at, NOW()), updated_at = NOW()
+            WHERE tenant_id = $1 AND asaas_payment_id = $2 AND status <> 'paid'
+            """,
+            tenant_id,
+            payment_id,
+        )
+    elif status in {"REFUNDED", "PARTIALLY_REFUNDED"}:
+        await conn.execute(
+            """
+            UPDATE orders
+            SET status = 'refunded', updated_at = NOW()
+            WHERE tenant_id = $1 AND asaas_payment_id = $2 AND status <> 'refunded'
+            """,
+            tenant_id,
+            payment_id,
+        )
+    elif status == "CANCELLED":
+        await conn.execute(
+            """
+            UPDATE orders
+            SET status = 'cancelled', cancelled_at = COALESCE(cancelled_at, NOW()), updated_at = NOW()
+            WHERE tenant_id = $1 AND asaas_payment_id = $2 AND status NOT IN ('paid', 'cancelled')
+            """,
+            tenant_id,
+            payment_id,
+        )
+
+
 def _parse_external_reference(reference: str) -> tuple[str, str]:
     """Extrai phone e product_id de tenant:phone:product_id:external_id."""
     parts = (reference or "").split(":")
@@ -161,8 +227,31 @@ def _parse_external_reference(reference: str) -> tuple[str, str]:
     return "", ""
 
 
+def _reference_tenant(reference: str) -> str:
+    """Extract tenant_id from tenant:phone:product_id:external_id."""
+    parts = (reference or "").split(":")
+    if len(parts) >= 3:
+        return parts[0]
+    return ""
+
+
 def _amount_to_cents(value: Optional[Any]) -> int:
     try:
         return int(round(float(value or 0) * 100))
     except (TypeError, ValueError):
         return 0
+
+
+def _provider_event_id(body: dict[str, Any], event: str, payment_id: str) -> str:
+    """Return a stable idempotency key for Asaas webhook deliveries."""
+    event_id = str(body.get("id") or "").strip()
+    if event_id:
+        return event_id
+    if event and payment_id:
+        return f"{event}:{payment_id}"
+    return ""
+
+
+def _inserted(command_status: str) -> bool:
+    """asyncpg returns command tags such as 'INSERT 0 1' or 'INSERT 0 0'."""
+    return str(command_status).strip().endswith(" 1")

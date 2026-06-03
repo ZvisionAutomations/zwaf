@@ -3,11 +3,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, Optional
 
 logger = logging.getLogger("zwaf.memory.lead_store")
 
 _DB_URL: Optional[str] = None
+
+
+def _db_url() -> str:
+    return (_DB_URL or os.getenv("DATABASE_URL", "")).replace("+asyncpg", "")
 
 
 def configure(db_url: str) -> None:
@@ -17,11 +22,12 @@ def configure(db_url: str) -> None:
 
 async def get_lead(phone: str, tenant_id: str) -> Optional[dict]:
     """Retorna dados do lead ou None se não encontrado."""
-    if not _DB_URL:
+    db_url = _db_url()
+    if not db_url:
         return None
     try:
         import asyncpg
-        conn = await asyncpg.connect(_DB_URL)
+        conn = await asyncpg.connect(db_url)
         row = await conn.fetchrow(
             "SELECT * FROM leads WHERE tenant_id = $1 AND phone = $2",
             tenant_id, phone,
@@ -41,11 +47,12 @@ async def upsert_lead(
     last_agent: Optional[str] = None,
 ) -> None:
     """Insere ou atualiza lead no PostgreSQL."""
-    if not _DB_URL:
+    db_url = _db_url()
+    if not db_url:
         return
     try:
         import asyncpg
-        conn = await asyncpg.connect(_DB_URL)
+        conn = await asyncpg.connect(db_url)
         await conn.execute(
             """
             INSERT INTO leads (tenant_id, phone, name, email, last_agent, updated_at)
@@ -63,6 +70,50 @@ async def upsert_lead(
         logger.warning("lead_store.upsert_lead failed: %s", e)
 
 
+async def mark_opt_out(
+    phone: str,
+    tenant_id: str,
+    reason: str = "lead_requested",
+) -> None:
+    """Marca lead como opt-out em tabelas novas e legadas, best-effort."""
+    db_url = _db_url()
+    if not db_url:
+        return
+    try:
+        import asyncpg
+        conn = await asyncpg.connect(db_url)
+        try:
+            await conn.execute(
+                """
+                INSERT INTO lead_profiles (
+                    tenant_id, phone, opt_out_at, opt_out_reason, contact_status, updated_at
+                )
+                VALUES ($1, $2, NOW(), $3, 'opted_out', NOW())
+                ON CONFLICT (tenant_id, phone) DO UPDATE SET
+                    opt_out_at = COALESCE(lead_profiles.opt_out_at, NOW()),
+                    opt_out_reason = EXCLUDED.opt_out_reason,
+                    contact_status = 'opted_out',
+                    updated_at = NOW()
+                """,
+                tenant_id, phone, reason,
+            )
+            await conn.execute(
+                """
+                UPDATE leads
+                SET opt_out_at = COALESCE(opt_out_at, NOW()),
+                    opt_out_reason = $3,
+                    contact_status = 'opted_out',
+                    updated_at = NOW()
+                WHERE tenant_id = $1 AND phone = $2
+                """,
+                tenant_id, phone, reason,
+            )
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.warning("lead_store.mark_opt_out failed: %s", e)
+
+
 async def append_purchase_history(
     phone: str,
     tenant_id: str,
@@ -70,11 +121,12 @@ async def append_purchase_history(
     amount_cents: int,
 ) -> None:
     """Adiciona entrada ao histórico de compra do lead."""
-    if not _DB_URL:
+    db_url = _db_url()
+    if not db_url:
         return
     try:
         import asyncpg
-        conn = await asyncpg.connect(_DB_URL)
+        conn = await asyncpg.connect(db_url)
         entry = json.dumps({"product_id": product_id, "amount_cents": amount_cents})
         await conn.execute(
             """
@@ -99,11 +151,12 @@ async def append_conversion_event(
     signal: dict[str, Any],
 ) -> None:
     """Persist conversion signal best-effort for funnel analysis."""
-    if not _DB_URL:
+    db_url = _db_url()
+    if not db_url:
         return
     try:
         import asyncpg
-        conn = await asyncpg.connect(_DB_URL)
+        conn = await asyncpg.connect(db_url)
         await conn.execute(
             """
             INSERT INTO conversion_events (

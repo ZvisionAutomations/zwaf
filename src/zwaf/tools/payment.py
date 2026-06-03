@@ -8,6 +8,9 @@ from typing import Any, Callable, Optional
 
 import httpx
 
+from zwaf.conversion.checkout_policy import normalize_delivery_address, validate_checkout_ready
+from zwaf.memory.order_store import create_order_draft, mark_order_payment_created
+
 logger = logging.getLogger("zwaf.tools.payment")
 
 _PRODUCT_NAMES = {
@@ -36,6 +39,7 @@ def make_payment_link_generator(
         customer_phone: str,
         customer_name: str = "",
         customer_document: str = "",
+        delivery_address: Optional[dict[str, Any]] = None,
         billing_type: str = "",
     ) -> str:
         """
@@ -46,6 +50,7 @@ def make_payment_link_generator(
             customer_phone: Numero do cliente com DDI, ex: 5511999990001
             customer_name: Nome do cliente, quando disponivel.
             customer_document: CPF/CNPJ do cliente, quando disponivel.
+            delivery_address: Endereco estruturado para entrega.
             billing_type: PIX, BOLETO ou CREDIT_CARD. Default vem do config/env.
 
         Returns:
@@ -69,9 +74,36 @@ def make_payment_link_generator(
             logger.error("Product '%s' not configured for tenant '%s'", product_id, tenant_id)
             return "Erro ao gerar link: produto nao configurado."
 
+        checkout = validate_checkout_ready(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            customer_name=customer_name,
+            customer_document=customer_document,
+            delivery_address=delivery_address,
+        )
+        if not checkout.ok:
+            if checkout.code == "blocked_product":
+                return "Nao vou gerar link para esse produto neste atendimento."
+            return "Erro ao gerar link: dados obrigatorios do pedido incompletos."
+
+        address = normalize_delivery_address(delivery_address)
+        order_id = await create_order_draft(
+            tenant_id=tenant_id,
+            lead_phone=customer_phone,
+            product_id=product_id,
+            product_cfg=product_cfg,
+            customer_name=customer_name,
+            customer_document=customer_document,
+            delivery_address=address,
+            billing_type=resolved_billing_type,
+            total_cents=price_cents,
+        )
+        if _db_required_for_checkout() and not order_id:
+            return "Erro ao gerar link: pedido nao foi registrado com seguranca."
+
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                customer_id = await _create_customer(
+                customer_id = await _create_or_reuse_customer(
                     client=client,
                     config=asaas,
                     tenant_id=tenant_id,
@@ -103,6 +135,12 @@ def make_payment_link_generator(
                 data = resp.json()
                 url = _extract_payment_url(data)
                 if url:
+                    await mark_order_payment_created(
+                        order_id=order_id,
+                        asaas_customer_id=customer_id,
+                        asaas_payment_id=str(data.get("id", "")),
+                        payment_url=url,
+                    )
                     return url
                 logger.error("Asaas returned no payment URL: %s", _redact(data))
                 return "Erro ao gerar link. Tente novamente em instantes."
@@ -147,6 +185,12 @@ def _asaas_config(payment_config: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _db_required_for_checkout() -> bool:
+    if os.getenv("DATABASE_URL", ""):
+        return True
+    return os.getenv("ZWAF_REQUIRE_ORDER_PERSISTENCE", "").lower() in {"1", "true", "yes"}
+
+
 def _config_value(
     payment_config: dict[str, Any],
     key: str,
@@ -165,10 +209,33 @@ def _asaas_headers(config: dict[str, str]) -> dict[str, str]:
     }
 
 
-async def _create_customer(
+def _customer_external_reference(tenant_id: str, customer_phone: str) -> str:
+    return f"{tenant_id}:{customer_phone}"
+
+
+async def _find_customer_by_external_reference(
     client: httpx.AsyncClient,
     config: dict[str, str],
-    tenant_id: str,
+    external_reference: str,
+) -> dict[str, Any]:
+    resp = await client.get(
+        f"{config['base_url']}/customers",
+        headers=_asaas_headers(config),
+        params={"externalReference": external_reference, "limit": 1},
+    )
+    resp.raise_for_status()
+    data = resp.json().get("data", [])
+    if isinstance(data, list) and data:
+        first = data[0]
+        if isinstance(first, dict):
+            return first
+    return {}
+
+
+async def _update_customer_document(
+    client: httpx.AsyncClient,
+    config: dict[str, str],
+    customer_id: str,
     customer_phone: str,
     customer_name: str,
     customer_document: str,
@@ -176,11 +243,52 @@ async def _create_customer(
     payload = {
         "name": customer_name or f"Cliente {customer_phone[-4:]}",
         "mobilePhone": customer_phone,
-        "externalReference": f"{tenant_id}:{customer_phone}",
+        "cpfCnpj": customer_document,
     }
-    document = customer_document or config["default_customer_cpf_cnpj"]
-    if document:
-        payload["cpfCnpj"] = document
+    resp = await client.put(
+        f"{config['base_url']}/customers/{customer_id}",
+        headers=_asaas_headers(config),
+        json=payload,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return str(data.get("id") or customer_id)
+
+
+async def _create_or_reuse_customer(
+    client: httpx.AsyncClient,
+    config: dict[str, str],
+    tenant_id: str,
+    customer_phone: str,
+    customer_name: str,
+    customer_document: str,
+) -> str:
+    external_reference = _customer_external_reference(tenant_id, customer_phone)
+    document = customer_document
+    existing = await _find_customer_by_external_reference(client, config, external_reference)
+    if existing:
+        customer_id = str(existing.get("id", ""))
+        if customer_id and document and existing.get("cpfCnpj") != document:
+            return await _update_customer_document(
+                client=client,
+                config=config,
+                customer_id=customer_id,
+                customer_phone=customer_phone,
+                customer_name=customer_name,
+                customer_document=document,
+            )
+        return customer_id
+
+    if not document:
+        logger.error("Asaas customer document missing for tenant '%s'", tenant_id)
+        return ""
+
+    payload = {
+        "name": customer_name or f"Cliente {customer_phone[-4:]}",
+        "mobilePhone": customer_phone,
+        "externalReference": external_reference,
+        "cpfCnpj": document,
+    }
 
     resp = await client.post(
         f"{config['base_url']}/customers",
