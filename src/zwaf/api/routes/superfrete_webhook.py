@@ -68,7 +68,7 @@ async def receive_superfrete_webhook(
 def _verify_signature(body: bytes, received_signature: str) -> bool:
     secret = os.getenv("SUPERFRETE_WEBHOOK_SECRET", "")
     if not secret:
-        return os.getenv("ENV", "").lower() != "production"
+        return os.getenv("SUPERFRETE_ALLOW_UNSIGNED_WEBHOOKS", "").lower() == "true"
     if not received_signature:
         return False
     expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()

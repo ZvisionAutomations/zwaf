@@ -20,6 +20,7 @@ def _client() -> TestClient:
 def test_superfrete_webhook_accepts_event_without_db_in_development(monkeypatch):
     monkeypatch.delenv("SUPERFRETE_WEBHOOK_SECRET", raising=False)
     monkeypatch.delenv("ENV", raising=False)
+    monkeypatch.setenv("SUPERFRETE_ALLOW_UNSIGNED_WEBHOOKS", "true")
 
     async def fake_record(**kwargs):
         return "accepted_no_db"
@@ -41,6 +42,31 @@ def test_superfrete_webhook_rejects_invalid_signature_in_production(monkeypatch)
     response = _client().post(
         "/shipping/superfrete/livia-raiz-vital",
         headers={"X-ME-Signature": "wrong"},
+        json={"event": "order.delivered", "data": {"id": "sf_123"}},
+    )
+
+    assert response.status_code == 401
+
+
+def test_superfrete_webhook_rejects_missing_secret_without_unsigned_flag(monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.delenv("SUPERFRETE_WEBHOOK_SECRET", raising=False)
+    monkeypatch.delenv("SUPERFRETE_ALLOW_UNSIGNED_WEBHOOKS", raising=False)
+
+    response = _client().post(
+        "/shipping/superfrete/livia-raiz-vital",
+        json={"event": "order.delivered", "data": {"id": "sf_123"}},
+    )
+
+    assert response.status_code == 401
+
+
+def test_superfrete_webhook_rejects_unsigned_when_secret_exists_outside_production(monkeypatch):
+    monkeypatch.setenv("ENV", "development")
+    monkeypatch.setenv("SUPERFRETE_WEBHOOK_SECRET", "webhook-secret")
+
+    response = _client().post(
+        "/shipping/superfrete/livia-raiz-vital",
         json={"event": "order.delivered", "data": {"id": "sf_123"}},
     )
 
@@ -89,6 +115,7 @@ def test_superfrete_webhook_validates_hmac_and_redacts_payload(monkeypatch):
 
 def test_superfrete_webhook_ignores_unknown_event(monkeypatch):
     monkeypatch.delenv("SUPERFRETE_WEBHOOK_SECRET", raising=False)
+    monkeypatch.setenv("SUPERFRETE_ALLOW_UNSIGNED_WEBHOOKS", "true")
     response = _client().post(
         "/shipping/superfrete/livia-raiz-vital",
         json={"event": "order.unknown", "data": {"id": "sf_123"}},

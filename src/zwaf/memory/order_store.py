@@ -308,6 +308,35 @@ async def upsert_shipment(
     return str(shipment_id or "")
 
 
+async def get_superfrete_shipment_for_order(*, order_id: str) -> dict[str, Any]:
+    db_url = _db_url()
+    if not db_url or not order_id:
+        return {}
+    try:
+        import asyncpg
+
+        conn = await asyncpg.connect(db_url)
+        try:
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    id, order_id, provider, external_shipment_id, tracking_code,
+                    status, posted_at, delivered_at, created_at, updated_at
+                FROM shipments
+                WHERE order_id = $1 AND provider = 'superfrete'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                order_id,
+            )
+        finally:
+            await conn.close()
+    except Exception as exc:
+        logger.error("SuperFrete shipment lookup failed: %s", exc)
+        return {}
+    return dict(row) if row else {}
+
+
 async def record_superfrete_tracking_event(
     *,
     tenant_id: str,

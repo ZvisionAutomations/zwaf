@@ -54,35 +54,43 @@ async def create_label_for_order(
     quantity = int(context.get("quantity") or 1)
     volume = package_from_env(quantity)
     sf = client or SuperFreteClient()
-    cart = await sf.add_to_cart(
-        sender=sender_from_env(),
-        recipient=_recipient_from_context(context),
-        service=service_id,
-        products=[_product_declaration(context)],
-        volume=volume,
-    )
-    provider_order_id = str(cart.get("id") or cart.get("order_id") or "")
-    if not provider_order_id:
-        logger.error("SuperFrete cart response without order id")
-        return {"status": "cart_without_id"}
+    existing = await order_store.get_superfrete_shipment_for_order(order_id=order_id)
+    provider_order_id = str(existing.get("external_shipment_id") or "")
+    if existing and _shipment_has_label(existing):
+        return _existing_label_response(existing)
 
-    await order_store.upsert_shipment(
-        order_id=order_id,
-        provider="superfrete",
-        external_shipment_id=provider_order_id,
-        status=str(cart.get("status") or "created"),
-        tracking_code=str(cart.get("tracking_code") or cart.get("tracking") or ""),
-        event_type="label_cart_created",
-        raw_payload_redacted=_redact_operational_payload(cart),
-    )
+    if not provider_order_id:
+        cart = await sf.add_to_cart(
+            sender=sender_from_env(),
+            recipient=_recipient_from_context(context),
+            service=service_id,
+            products=[_product_declaration(context)],
+            volume=volume,
+            tag=order_id,
+            url=_order_url(order_id),
+        )
+        provider_order_id = str(cart.get("id") or cart.get("order_id") or "")
+        if not provider_order_id:
+            logger.error("SuperFrete cart response without order id")
+            return {"status": "cart_without_id"}
+
+        await order_store.upsert_shipment(
+            order_id=order_id,
+            provider="superfrete",
+            external_shipment_id=provider_order_id,
+            status=str(cart.get("status") or "created"),
+            tracking_code=str(cart.get("tracking_code") or cart.get("tracking") or ""),
+            event_type="label_cart_created",
+            raw_payload_redacted=_redact_operational_payload(cart),
+        )
 
     if not execute_checkout:
-        return {"status": "cart_created", "provider_order_id": provider_order_id}
+        return {"status": "cart_exists" if existing else "cart_created", "provider_order_id": provider_order_id}
 
     checkout = await sf.checkout([provider_order_id])
     order_data = _checkout_order(checkout, provider_order_id)
     tracking_code = str(order_data.get("tracking") or order_data.get("tracking_code") or "")
-    label_url = _label_url(order_data)
+    label_url = await _label_url(order_data, sf, provider_order_id)
     await order_store.upsert_shipment(
         order_id=order_id,
         provider="superfrete",
@@ -145,11 +153,35 @@ def _checkout_order(checkout: dict[str, Any], provider_order_id: str) -> dict[st
     return {}
 
 
-def _label_url(order_data: dict[str, Any]) -> str:
+async def _label_url(order_data: dict[str, Any], client: SuperFreteClient, provider_order_id: str) -> str:
     print_data = order_data.get("print") if isinstance(order_data, dict) else None
     if isinstance(print_data, dict):
-        return str(print_data.get("url") or "")
-    return ""
+        url = str(print_data.get("url") or "")
+        if url:
+            return url
+    tag = await client.tag_print([provider_order_id])
+    return str(tag.get("url") or "")
+
+
+def _shipment_has_label(shipment: dict[str, Any]) -> bool:
+    status = str(shipment.get("status") or "").lower()
+    return bool(
+        shipment.get("tracking_code")
+        or status in {"paid", "generated", "posted", "delivered", "label_created"}
+    )
+
+
+def _existing_label_response(shipment: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": "label_exists",
+        "provider_order_id": str(shipment.get("external_shipment_id") or ""),
+        "tracking_code": str(shipment.get("tracking_code") or ""),
+        "label_url": "",
+    }
+
+
+def _order_url(order_id: str) -> str:
+    return f"zwaf://orders/{order_id}"
 
 
 def _redact_operational_payload(payload: dict[str, Any]) -> dict[str, Any]:
