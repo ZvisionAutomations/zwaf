@@ -21,6 +21,7 @@ async def run(args: argparse.Namespace) -> int:
         print(f"base_url: {os.getenv('SUPERFRETE_BASE_URL', 'https://sandbox.superfrete.com')}")
         print(f"user_agent_configured: {bool(os.getenv('SUPERFRETE_USER_AGENT'))}")
         print(f"from_postal_code_configured: {bool(sender.get('postal_code'))}")
+        print(f"auto_checkout_enabled: {os.getenv('SUPERFRETE_AUTO_CHECKOUT_ENABLED', '').lower() == 'true'}")
         print(f"sample_package: {package_from_env(args.quantity)}")
         print("No SuperFrete request was sent.")
         return 0
@@ -55,6 +56,9 @@ async def run(args: argparse.Namespace) -> int:
     print(f"provider_order_id: {result.get('provider_order_id', '')}")
     print(f"tracking_code_present: {bool(result.get('tracking_code'))}")
     print(f"label_url_present: {bool(result.get('label_url'))}")
+    if result.get("status") == "manual_fulfillment_pending":
+        print("Auto checkout disabled. Emit the label manually in SuperFrete.")
+        return 0
     return 0 if result.get("status") == "label_created" else 1
 
 

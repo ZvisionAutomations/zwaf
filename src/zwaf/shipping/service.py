@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Optional
 
 from zwaf.memory import order_store
@@ -84,8 +85,11 @@ async def create_label_for_order(
             raw_payload_redacted=_redact_operational_payload(cart),
         )
 
-    if not execute_checkout:
-        return {"status": "cart_exists" if existing else "cart_created", "provider_order_id": provider_order_id}
+    if not execute_checkout or not auto_checkout_enabled():
+        return {
+            "status": "cart_exists" if existing else "manual_fulfillment_pending",
+            "provider_order_id": provider_order_id,
+        }
 
     checkout = await sf.checkout([provider_order_id])
     order_data = _checkout_order(checkout, provider_order_id)
@@ -190,3 +194,7 @@ def _redact_operational_payload(payload: dict[str, Any]) -> dict[str, Any]:
         for key, value in payload.items()
         if key in {"id", "order_id", "status", "service_id", "price", "discount", "label_url", "tracking"}
     }
+
+
+def auto_checkout_enabled() -> bool:
+    return os.getenv("SUPERFRETE_AUTO_CHECKOUT_ENABLED", "").lower() == "true"

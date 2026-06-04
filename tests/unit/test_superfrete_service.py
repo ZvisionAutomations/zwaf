@@ -70,6 +70,7 @@ async def test_create_label_for_order_persists_cart_and_checkout(monkeypatch):
     monkeypatch.setattr(service.order_store, "get_order_shipping_context", fake_context)
     monkeypatch.setattr(service.order_store, "get_superfrete_shipment_for_order", _missing_shipment)
     monkeypatch.setattr(service.order_store, "upsert_shipment", fake_upsert)
+    monkeypatch.setenv("SUPERFRETE_AUTO_CHECKOUT_ENABLED", "true")
 
     client = FakeSuperFreteClient()
     result = await service.create_label_for_order(
@@ -112,6 +113,7 @@ async def test_create_label_for_order_falls_back_to_tag_print(monkeypatch):
     monkeypatch.setattr(service.order_store, "get_order_shipping_context", fake_context)
     monkeypatch.setattr(service.order_store, "get_superfrete_shipment_for_order", _missing_shipment)
     monkeypatch.setattr(service.order_store, "upsert_shipment", fake_upsert)
+    monkeypatch.setenv("SUPERFRETE_AUTO_CHECKOUT_ENABLED", "true")
     client = FakeSuperFreteClient(checkout_has_print=False)
 
     result = await service.create_label_for_order(order_id="order-123", service_id=1, client=client)
@@ -166,6 +168,7 @@ async def test_create_label_for_order_reuses_existing_cart_without_new_cart(monk
     monkeypatch.setattr(service.order_store, "get_order_shipping_context", fake_context)
     monkeypatch.setattr(service.order_store, "get_superfrete_shipment_for_order", existing_shipment)
     monkeypatch.setattr(service.order_store, "upsert_shipment", fake_upsert)
+    monkeypatch.setenv("SUPERFRETE_AUTO_CHECKOUT_ENABLED", "true")
     client = FakeSuperFreteClient()
 
     result = await service.create_label_for_order(order_id="order-123", service_id=1, client=client)
@@ -174,6 +177,40 @@ async def test_create_label_for_order_reuses_existing_cart_without_new_cart(monk
     assert client.add_to_cart_calls == 0
     assert client.checkout_calls == 1
     assert upserts[0]["event_type"] == "label_checkout"
+
+
+@pytest.mark.asyncio
+async def test_create_label_for_order_defaults_to_manual_fulfillment(monkeypatch):
+    async def fake_context(order_id: str):
+        return {
+            "order_id": order_id,
+            "product_id": "new-woman",
+            "quantity": 1,
+            "total_cents": 14900,
+            "customer_name": "Cliente Teste",
+            "postal_code": "20020050",
+            "street": "Rua Teste",
+            "number": "10",
+            "district": "Centro",
+            "city": "Rio de Janeiro",
+            "state": "RJ",
+        }
+
+    async def fake_upsert(**kwargs):
+        return "shipment-123"
+
+    monkeypatch.setattr(service.order_store, "get_order_shipping_context", fake_context)
+    monkeypatch.setattr(service.order_store, "get_superfrete_shipment_for_order", _missing_shipment)
+    monkeypatch.setattr(service.order_store, "upsert_shipment", fake_upsert)
+    monkeypatch.delenv("SUPERFRETE_AUTO_CHECKOUT_ENABLED", raising=False)
+    client = FakeSuperFreteClient()
+
+    result = await service.create_label_for_order(order_id="order-123", service_id=1, client=client)
+
+    assert result["status"] == "manual_fulfillment_pending"
+    assert result["provider_order_id"] == "sf_order_123"
+    assert client.add_to_cart_calls == 1
+    assert client.checkout_calls == 0
 
 
 async def _missing_shipment(order_id: str):
