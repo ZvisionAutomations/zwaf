@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 import logging
 import os
+import socket
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -70,6 +73,59 @@ def _timeout_seconds() -> float:
         return max(1.0, float(raw))
     except ValueError:
         return 20.0
+
+
+def _allowed_download_hosts() -> set[str]:
+    raw = os.getenv("TRANSCRIPTION_URL_ALLOWED_HOSTS", "") or ""
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
+def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+def _validate_download_url(url: str) -> str:
+    """Return "" if the URL is safe to fetch, otherwise a rejection reason code.
+
+    Enforces http(s) scheme, an optional host allowlist
+    (TRANSCRIPTION_URL_ALLOWED_HOSTS), and always blocks resolved IPs that are
+    private/loopback/link-local/reserved/multicast (SSRF guard).
+    """
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        return "blocked_url_scheme"
+
+    host = parts.hostname
+    if not host:
+        return "blocked_url_host"
+
+    allowed = _allowed_download_hosts()
+    if allowed and host.lower() not in allowed:
+        return "blocked_url_host"
+
+    # Resolve every address the host maps to and reject if any is internal.
+    try:
+        infos = socket.getaddrinfo(host, parts.port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        return "blocked_url_dns"
+
+    for info in infos:
+        sockaddr = info[4]
+        try:
+            ip = ipaddress.ip_address(sockaddr[0])
+        except ValueError:
+            return "blocked_url_ip"
+        if _is_blocked_ip(ip):
+            return "blocked_url_ip"
+
+    return ""
 
 
 def extract_audio_descriptor(message: dict[str, Any]) -> dict[str, Any]:
@@ -156,10 +212,7 @@ async def transcribe_audio(audio: AudioContent) -> TranscriptionResult:
 
     fallback = _fallback_provider_name()
     if fallback and fallback != "disabled" and fallback != primary:
-        fallback_result = await _transcribe_with_provider(fallback, audio)
-        if fallback_result.ok:
-            return fallback_result
-        return fallback_result
+        return await _transcribe_with_provider(fallback, audio)
 
     return result
 
@@ -253,14 +306,29 @@ async def _download_audio_url(
     message_id: str,
     duration_seconds: int | None,
 ) -> TranscriptionResult | AudioContent:
+    rejection = _validate_download_url(url)
+    if rejection:
+        logger.warning("Audio media URL rejected", extra={"reason": rejection})
+        return TranscriptionResult(ok=False, code=rejection)
+
+    max_bytes = _max_audio_bytes()
     try:
         async with httpx.AsyncClient(timeout=_timeout_seconds()) as client:
-            response = await client.get(url)
-            response.raise_for_status()
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                resolved_content_type = response.headers.get(
+                    "content-type", content_type
+                ).split(";", 1)[0]
+                buffer = bytearray()
+                async for chunk in response.aiter_bytes():
+                    buffer.extend(chunk)
+                    if len(buffer) > max_bytes:
+                        logger.warning("Audio media URL exceeded max bytes during download")
+                        return TranscriptionResult(ok=False, code="media_too_large")
             return AudioContent(
-                bytes_data=response.content,
+                bytes_data=bytes(buffer),
                 filename=filename,
-                content_type=response.headers.get("content-type", content_type).split(";", 1)[0],
+                content_type=resolved_content_type,
                 message_id=message_id,
                 duration_seconds=duration_seconds,
             )
