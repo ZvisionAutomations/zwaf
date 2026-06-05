@@ -1,4 +1,4 @@
-"""Sofia Daily Report metrics, formatting and WhatsApp delivery."""
+"""Raiz Vital Daily Report metrics, formatting and WhatsApp delivery."""
 from __future__ import annotations
 
 import logging
