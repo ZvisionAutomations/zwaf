@@ -175,6 +175,9 @@ Nota de validacao S7: FAIL pre-existente fora do contrato do Sprint 1 no Windows
 - 2026-06-05 FASE 2: S5 PASS (`All checks passed!`), S6 PASS (`Success: no issues found in 46 source files`).
 - 2026-06-05 FASE 2: S1 PASS (`132 passed in 21.40s`), S2 PASS (`132 passed in 17.76s`), S3 PASS (`132 passed in 21.78s`, total 50%).
 - 2026-06-05 FASE 2: S7 literal FAIL por `grep` ausente; `rg --count-matches` retornou 9 arquivos com hits de nomes/configuracao/regexes. Mantido em blockers/backlog.
+- 2026-06-05 Story 019: Implementada transcricao de audio WhatsApp via provider Groq configuravel, com fallback seguro e testes sem rede real.
+- 2026-06-05 Story 019: S1 PASS (`151 passed in 43.22s`), S2 PASS (`151 passed in 43.64s`), S5 PASS (`All checks passed!`), S6 PASS (`Success: no issues found in 52 source files`).
+- 2026-06-05 Story 019: S7 com `rg --count-matches` retornou hits por nomes de identificadores; busca focada `BEGIN .*PRIVATE KEY|sk-[A-Za-z0-9_\-]{12,}` em `src` retornou zero hits.
 
 ## Backlog descoberto
 
