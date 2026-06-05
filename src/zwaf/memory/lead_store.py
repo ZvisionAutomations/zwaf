@@ -12,7 +12,7 @@ _DB_URL: Optional[str] = None
 
 
 def _db_url() -> str:
-    return (_DB_URL or os.getenv("DATABASE_URL", "")).replace("+asyncpg", "")
+    return (_DB_URL or os.getenv("DATABASE_URL") or "").replace("+asyncpg", "")
 
 
 def configure(db_url: str) -> None:

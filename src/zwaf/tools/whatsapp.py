@@ -17,7 +17,7 @@ import random
 import re
 import time
 from collections import defaultdict, deque
-from typing import Optional, Sequence
+from typing import Optional
 
 import httpx
 
@@ -295,14 +295,12 @@ class WhatsAppTool(BaseTool):
         Camada de retry específica para 429.
         Separa o handling de 429 (backoff 30s+) de 5xx (backoff normal).
         """
-        last_err: Exception | None = None
         for attempt in range(max_attempts):
             try:
                 if self.typing_simulation:
                     await self._set_typing(phone, len(text))
                 return await self._send_raw_with_5xx_retry(phone, text)
-            except RateLimitError as e:
-                last_err = e
+            except RateLimitError:
                 if attempt < max_attempts - 1:
                     jitter = random.uniform(0, HTTP_429_MAX_JITTER)
                     backoff = HTTP_429_MIN_BACKOFF + jitter
@@ -329,7 +327,6 @@ class WhatsAppTool(BaseTool):
         base_delay: float = 1.0,
     ) -> ToolResult:
         """Retry para 5xx com exponential backoff (1s→2s→4s). NÃO captura 429."""
-        import httpx
         last_err: Exception | None = None
         for attempt in range(max_attempts):
             try:
@@ -364,9 +361,8 @@ class WhatsAppTool(BaseTool):
 
     async def _send_raw(self, phone: str, text: str) -> ToolResult:
         """POST direto para Evolution API — sem retry. Lança exceção em erro."""
-        import httpx
         url = f"{self.base_url}/message/sendText/{self.current_instance}"
-        payload = {"number": phone, "text": text}
+        payload: dict[str, str | int] = {"number": phone, "text": text}
         if self.send_text_delay_ms is not None:
             payload["delay"] = self.send_text_delay_ms
         logger.info(
@@ -388,7 +384,6 @@ class WhatsAppTool(BaseTool):
 
     async def _set_typing(self, phone: str, text_length: int) -> None:
         """Envia presença 'composing'. Best-effort — nunca bloqueia o envio."""
-        import httpx
         delay_ms = self._typing_delay_ms(text_length)
         url = f"{self.base_url}/chat/sendPresence/{self.current_instance}"
         payload = {"number": phone, "presence": "composing", "delay": delay_ms}

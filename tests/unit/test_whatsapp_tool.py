@@ -1,8 +1,6 @@
 """TDD — testes para WhatsAppTool com throttle fix."""
 from __future__ import annotations
 
-import asyncio
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -243,8 +241,6 @@ class TestWhatsAppTool429Handler:
 
         async def mock_sleep(seconds):
             sleep_calls.append(seconds)
-
-        import httpx
 
         call_count = [0]
 

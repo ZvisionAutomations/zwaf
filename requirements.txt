@@ -58,3 +58,5 @@ apscheduler>=3.10.0
 pytest>=8.2.0
 pytest-asyncio>=0.23.0
 pytest-cov>=5.0.0
+ruff>=0.15.14
+mypy>=2.1.0

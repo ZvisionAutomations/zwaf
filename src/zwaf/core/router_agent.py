@@ -181,7 +181,6 @@ def _is_greeting_only(message: str) -> bool:
 
 def _is_only_emoji(text: str) -> bool:
     """Retorna True se o texto contém apenas emojis/espaços (sem letras ou dígitos)."""
-    import unicodedata
     for char in text:
         if char.isalpha() or char.isdigit():
             return False

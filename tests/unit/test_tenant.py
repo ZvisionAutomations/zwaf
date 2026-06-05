@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -17,7 +16,6 @@ from zwaf.core.tenant import (
     TenantConfig,
     TenantLoadError,
     TypingSimulationConfig,
-    WhatsAppConfig,
 )
 
 

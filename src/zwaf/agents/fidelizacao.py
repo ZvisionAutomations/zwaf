@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Any
 
 from agno.agent import Agent
 
@@ -74,7 +74,7 @@ class FidelizacaoScheduler:
         self._tenant_config = tenant_config
         self._whatsapp_tool = whatsapp_tool
         self._db_url = db_url
-        self._scheduler = None
+        self._scheduler: Any | None = None
 
     def start(self) -> None:
         """Inicia APScheduler com job diario de verificacao."""

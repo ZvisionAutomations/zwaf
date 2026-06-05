@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from zwaf.conversion.checkout_policy import is_opt_out_message
 from zwaf.conversion.intelligence import LeadSignal, analyze_message
@@ -174,7 +174,7 @@ class ZWAFTeam:
 
     def _build_agent(self, agent_name: str, session_id: str, lead_id: str):
         """Factory: constroi o agente Agno correto para o nome dado."""
-        kwargs = dict(
+        kwargs: Any = dict(
             tenant_config=self._tenant,
             whatsapp_tool=self._whatsapp,
             session_id=session_id,
