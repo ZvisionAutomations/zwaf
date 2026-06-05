@@ -72,7 +72,7 @@ ENTAO o comportamento existente permanece inalterado
   - `GROQ_API_KEY=`
   - `GROQ_TRANSCRIPTION_MODEL=whisper-large-v3-turbo`
   - `TRANSCRIPTION_TIMEOUT_SECONDS=20`
-  - `TRANSCRIPTION_MAX_AUDIO_BYTES=26214400`
+  - `TRANSCRIPTION_MAX_BYTES=26214400`
 - Reusar `httpx`, ja existente em `requirements.txt`.
 - Evitar SDK novo nesta story para reduzir superficie e dependencia.
 

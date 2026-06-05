@@ -167,8 +167,6 @@ async def receive_webhook(
         )
         return {"status": "accepted"}
 
-    if not phone or not text:
-        return {"status": "ignored", "reason": "no_text_content"}
     return {"status": "ignored", "reason": "no_text_content"}
 
 
