@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -51,6 +52,26 @@ def _extract_message(payload: dict) -> tuple[str, str, str]:
         text = ext.get("text", "")
 
     return phone, text, push_name
+
+
+def _extract_audio_message(payload: dict) -> tuple[str, dict[str, Any], dict[str, Any], str]:
+    """Extract (phone, message, key, push_name) when payload contains supported audio."""
+    data = payload.get("data", {})
+    key = data.get("key", {})
+    if key.get("fromMe", False):
+        return "", {}, {}, ""
+
+    phone = key.get("remoteJid", "").split("@")[0]
+    push_name = data.get("pushName", phone)
+    message = data.get("message", {})
+    try:
+        from zwaf.audio.transcription import has_audio_message
+
+        if phone and has_audio_message(message):
+            return phone, message, key, push_name
+    except Exception:
+        return "", {}, {}, ""
+    return "", {}, {}, ""
 
 
 def _expected_instances(team: Any) -> set[str]:
@@ -100,27 +121,55 @@ async def receive_webhook(
 
     phone, text, _push_name = _extract_message(body)
 
+    if phone and text:
+        session_id = f"{tenant_id}_{phone}"
+        lead_id = phone
+
+        logger.info(
+            "Webhook message received",
+            extra={
+                "tenant_id": tenant_id,
+                "phone_tail": phone[-4:],
+                "text_length": len(text),
+                "instance": payload.instance,
+            },
+        )
+
+        asyncio.create_task(
+            _process_and_respond(team, text, phone, session_id, lead_id, tenant_id)
+        )
+
+        return {"status": "accepted"}
+
+    audio_phone, audio_message, message_key, _audio_push_name = _extract_audio_message(body)
+    if audio_phone and audio_message:
+        session_id = f"{tenant_id}_{audio_phone}"
+        lead_id = audio_phone
+        logger.info(
+            "Webhook audio message received",
+            extra={
+                "tenant_id": tenant_id,
+                "phone_tail": audio_phone[-4:],
+                "instance": payload.instance,
+            },
+        )
+        asyncio.create_task(
+            _process_audio_and_respond(
+                team=team,
+                audio_message=audio_message,
+                message_key=message_key,
+                phone=audio_phone,
+                session_id=session_id,
+                lead_id=lead_id,
+                tenant_id=tenant_id,
+                instance=payload.instance,
+            )
+        )
+        return {"status": "accepted"}
+
     if not phone or not text:
         return {"status": "ignored", "reason": "no_text_content"}
-
-    session_id = f"{tenant_id}_{phone}"
-    lead_id = phone
-
-    logger.info(
-        "Webhook message received",
-        extra={
-            "tenant_id": tenant_id,
-            "phone_tail": phone[-4:],
-            "text_length": len(text),
-            "instance": payload.instance,
-        },
-    )
-
-    asyncio.create_task(
-        _process_and_respond(team, text, phone, session_id, lead_id, tenant_id)
-    )
-
-    return {"status": "accepted"}
+    return {"status": "ignored", "reason": "no_text_content"}
 
 
 async def _process_and_respond(team, message, phone, session_id, lead_id, tenant_id):
@@ -161,6 +210,76 @@ async def _process_and_respond(team, message, phone, session_id, lead_id, tenant
             status="error",
             error=str(e),
         )
+
+
+async def _process_audio_and_respond(
+    *,
+    team,
+    audio_message: dict[str, Any],
+    message_key: dict[str, Any],
+    phone: str,
+    session_id: str,
+    lead_id: str,
+    tenant_id: str,
+    instance: str,
+) -> None:
+    """Transcribe supported audio and route the resulting text through the normal agent flow."""
+    try:
+        from zwaf.audio.transcription import (
+            AudioContent,
+            DEFAULT_FALLBACK_MESSAGE,
+            TranscriptionResult,
+            load_audio_content,
+            transcribe_audio,
+        )
+
+        audio = await load_audio_content(
+            message=audio_message,
+            instance=instance,
+            message_key=message_key,
+            evolution_url=os.getenv("EVOLUTION_API_URL", ""),
+            evolution_api_key=os.getenv("EVOLUTION_API_KEY", ""),
+        )
+        if isinstance(audio, TranscriptionResult):
+            await _send_audio_fallback(team, phone, session_id, audio.fallback_message)
+            _record_observability(
+                tenant_id=tenant_id,
+                phone=phone,
+                agent_used="audio_transcription",
+                latency_ms=0.0,
+                status=audio.code,
+            )
+            return
+        if not isinstance(audio, AudioContent):
+            await _send_audio_fallback(team, phone, session_id, DEFAULT_FALLBACK_MESSAGE)
+            return
+
+        result = await transcribe_audio(audio)
+        if not result.ok or not result.text.strip():
+            await _send_audio_fallback(team, phone, session_id, result.fallback_message)
+            _record_observability(
+                tenant_id=tenant_id,
+                phone=phone,
+                agent_used="audio_transcription",
+                latency_ms=0.0,
+                status=result.code,
+            )
+            return
+
+        await _process_and_respond(team, result.text.strip(), phone, session_id, lead_id, tenant_id)
+    except Exception as exc:
+        logger.error(
+            "Failed to process audio webhook message",
+            extra={"tenant_id": tenant_id, "error_type": type(exc).__name__},
+        )
+        await _send_audio_fallback(team, phone, session_id, DEFAULT_FALLBACK_MESSAGE)
+
+
+async def _send_audio_fallback(team, phone: str, session_id: str, message: str) -> None:
+    try:
+        await team.send_response(phone=phone, text=message, session_id=session_id)
+    except Exception:
+        logger.warning("Audio transcription fallback delivery failed")
 
 
 def _record_observability(
