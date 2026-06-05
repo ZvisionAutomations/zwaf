@@ -104,7 +104,7 @@ def _clean_asyncpg_url(db_url: str) -> str:
 
 
 def _initial_stock_from_env() -> int:
-    raw = os.getenv("INITIAL_STOCK_NEW_WOMAN") or os.getenv("INITIAL_STOCK", "600")
+    raw = os.getenv("INITIAL_STOCK_NEW_WOMAN") or os.getenv("INITIAL_STOCK") or "600"
     try:
         return int(raw)
     except ValueError:

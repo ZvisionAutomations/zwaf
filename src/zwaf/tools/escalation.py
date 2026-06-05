@@ -79,6 +79,6 @@ async def escalate_to_human(
 
     # Mensagem de confirmação para o lead
     return (
-        f"Estou chamando o Fernando agora para te ajudar pessoalmente. "
-        f"Ele vai entrar em contato com você em breve! 😊"
+        "Estou chamando o Fernando agora para te ajudar pessoalmente. "
+        "Ele vai entrar em contato com você em breve! 😊"
     )
