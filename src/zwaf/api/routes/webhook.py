@@ -153,17 +153,15 @@ async def receive_webhook(
                 "instance": payload.instance,
             },
         )
-        asyncio.create_task(
-            _process_audio_and_respond(
-                team=team,
-                audio_message=audio_message,
-                message_key=message_key,
-                phone=audio_phone,
-                session_id=session_id,
-                lead_id=lead_id,
-                tenant_id=tenant_id,
-                instance=payload.instance,
-            )
+        await _process_audio_and_respond(
+            team=team,
+            audio_message=audio_message,
+            message_key=message_key,
+            phone=audio_phone,
+            session_id=session_id,
+            lead_id=lead_id,
+            tenant_id=tenant_id,
+            instance=payload.instance,
         )
         return {"status": "accepted"}
 

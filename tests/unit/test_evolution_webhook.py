@@ -147,6 +147,41 @@ def test_extract_audio_message_ignores_from_me():
     assert (phone, message, key, push_name) == ("", {}, {}, "")
 
 
+def test_audio_webhook_processes_before_response(monkeypatch):
+    app = FastAPI()
+    app.state.teams = {"livia-raiz-vital": ProcessingTeam()}
+    app.include_router(webhook.router)
+    client = TestClient(app)
+    calls = []
+
+    async def fake_process_audio_and_respond(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(webhook, "_process_audio_and_respond", fake_process_audio_and_respond)
+
+    response = client.post(
+        "/livia-raiz-vital",
+        json={
+            "event": "messages.upsert",
+            "instance": "livia-test",
+            "data": {
+                "key": {
+                    "remoteJid": "5511999990001@s.whatsapp.net",
+                    "fromMe": False,
+                    "id": "msg-1",
+                },
+                "pushName": "Lead",
+                "message": {"audioMessage": {"mimetype": "audio/ogg", "ptt": True}},
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    assert calls
+    assert calls[0]["phone"] == "5511999990001"
+
+
 @pytest.mark.asyncio
 async def test_process_audio_routes_transcribed_text(monkeypatch):
     team = ProcessingTeam()

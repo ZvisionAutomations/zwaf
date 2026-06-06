@@ -64,10 +64,10 @@
 
   "router": {
     "keywords": {
-      "vendedor": ["quero comprar", "quanto custa", "como funciona", "tem desconto", "valor", "preço"],
+      "vendedor": ["quero comprar", "quanto custa", "como funciona", "tem desconto", "valor", "preço", "pix", "pagar via pix", "quero pagar"],
       "recompra": ["quero pedir de novo", "acabou", "renovar", "segundo pote", "recompra"],
       "suporte": ["não chegou", "problema", "dúvida", "como tomar", "efeito", "reação"],
-      "cobranca": ["pix", "boleto", "pagamento", "não consegui pagar", "link expirou"]
+      "cobranca": ["não consegui pagar", "nao consegui pagar", "link expirou", "erro no pagamento", "problema com pagamento"]
     },
     "fallback_llm": true
   },
