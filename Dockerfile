@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar código
 COPY src/ ./src/
 COPY tenants/ ./tenants/
+COPY harnesses/ ./harnesses/
 
 # Usuário não-root
 RUN useradd -m zwaf && chown -R zwaf:zwaf /app
