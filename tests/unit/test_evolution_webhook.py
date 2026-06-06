@@ -113,6 +113,20 @@ def test_evolution_webhook_ignores_irrelevant_event():
     assert response.json() == {"status": "ignored", "event": "connection.update"}
 
 
+def test_evolution_webhook_ignores_chats_update_with_list_data():
+    response = _client().post(
+        "/livia-raiz-vital",
+        json={
+            "event": "chats.update",
+            "instance": "livia-test",
+            "data": [{"remoteJid": "20444665122875@lid"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ignored", "event": "chats.update"}
+
+
 def test_extract_audio_message_detects_voice_note():
     phone, message, key, push_name = webhook._extract_audio_message(
         {
@@ -183,7 +197,7 @@ def test_audio_webhook_processes_before_response(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_process_audio_routes_transcribed_text(monkeypatch):
+async def test_process_audio_routes_transcribed_text(monkeypatch, caplog):
     team = ProcessingTeam()
 
     async def fake_load_audio_content(**kwargs):
@@ -195,19 +209,27 @@ async def test_process_audio_routes_transcribed_text(monkeypatch):
     monkeypatch.setattr("zwaf.audio.transcription.load_audio_content", fake_load_audio_content)
     monkeypatch.setattr("zwaf.audio.transcription.transcribe_audio", fake_transcribe_audio)
 
-    await webhook._process_audio_and_respond(
-        team=team,
-        audio_message={"audioMessage": {"mimetype": "audio/ogg", "ptt": True}},
-        message_key={"id": "msg-1"},
-        phone="5511999990001",
-        session_id="sess-1",
-        lead_id="lead-1",
-        tenant_id="livia-raiz-vital",
-        instance="livia-test",
-    )
+    with caplog.at_level("INFO", logger="zwaf.api.webhook"):
+        await webhook._process_audio_and_respond(
+            team=team,
+            audio_message={"audioMessage": {"mimetype": "audio/ogg", "ptt": True}},
+            message_key={"id": "msg-1"},
+            phone="5511999990001",
+            session_id="sess-1",
+            lead_id="lead-1",
+            tenant_id="livia-raiz-vital",
+            instance="livia-test",
+        )
 
     assert team.process_calls[0]["message"] == "quero comprar new woman"
     assert team.sent_messages[0]["text"] == "ok"
+    messages = "\n".join(record.message for record in caplog.records)
+    assert "audio_loaded" in messages
+    assert "audio_transcribed" in messages
+    assert "audio_agent_processed" in messages
+    assert "audio_send_started" in messages
+    assert "audio_send_success" in messages
+    assert "quero comprar new woman" not in messages
 
 
 @pytest.mark.asyncio

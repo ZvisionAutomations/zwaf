@@ -81,6 +81,10 @@ def _expected_instances(team: Any) -> set[str]:
     return {entry.instance for entry in phone_numbers if getattr(entry, "instance", "")}
 
 
+def _phone_tail(phone: str) -> str:
+    return phone[-4:] if phone else ""
+
+
 @router.post("/{tenant_id}")
 async def receive_webhook(
     tenant_id: str,
@@ -102,6 +106,10 @@ async def receive_webhook(
         logger.warning("Unknown tenant_id in webhook: %s", tenant_id)
         raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' not found")
 
+    event = str(body.get("event") or "")
+    if event != "messages.upsert":
+        return {"status": "ignored", "event": event}
+
     try:
         payload = EvolutionWebhookPayload.model_validate(body)
     except ValidationError:
@@ -116,9 +124,6 @@ async def receive_webhook(
         )
         raise HTTPException(status_code=403, detail="Invalid Evolution instance")
 
-    if payload.event != "messages.upsert":
-        return {"status": "ignored", "event": payload.event}
-
     phone, text, _push_name = _extract_message(body)
 
     if phone and text:
@@ -129,7 +134,7 @@ async def receive_webhook(
             "Webhook message received",
             extra={
                 "tenant_id": tenant_id,
-                "phone_tail": phone[-4:],
+                "phone_tail": _phone_tail(phone),
                 "text_length": len(text),
                 "instance": payload.instance,
             },
@@ -146,12 +151,11 @@ async def receive_webhook(
         session_id = f"{tenant_id}_{audio_phone}"
         lead_id = audio_phone
         logger.info(
-            "Webhook audio message received",
-            extra={
-                "tenant_id": tenant_id,
-                "phone_tail": audio_phone[-4:],
-                "instance": payload.instance,
-            },
+            "audio_webhook_received tenant=%s phone_tail=%s instance=%s message_id=%s",
+            tenant_id,
+            _phone_tail(audio_phone),
+            payload.instance,
+            str(message_key.get("id") or "")[:12],
         )
         await _process_audio_and_respond(
             team=team,
@@ -237,6 +241,12 @@ async def _process_audio_and_respond(
             evolution_api_key=os.getenv("EVOLUTION_API_KEY", ""),
         )
         if isinstance(audio, TranscriptionResult):
+            logger.warning(
+                "audio_load_failed tenant=%s phone_tail=%s code=%s",
+                tenant_id,
+                _phone_tail(phone),
+                audio.code,
+            )
             await _send_audio_fallback(team, phone, session_id, audio.fallback_message)
             _record_observability(
                 tenant_id=tenant_id,
@@ -247,11 +257,29 @@ async def _process_audio_and_respond(
             )
             return
         if not isinstance(audio, AudioContent):
+            logger.warning(
+                "audio_load_unexpected tenant=%s phone_tail=%s",
+                tenant_id,
+                _phone_tail(phone),
+            )
             await _send_audio_fallback(team, phone, session_id, DEFAULT_FALLBACK_MESSAGE)
             return
+        logger.info(
+            "audio_loaded tenant=%s phone_tail=%s bytes=%d duration=%s",
+            tenant_id,
+            _phone_tail(phone),
+            len(audio.bytes_data),
+            audio.duration_seconds if audio.duration_seconds is not None else "",
+        )
 
         result = await transcribe_audio(audio)
         if not result.ok or not result.text.strip():
+            logger.warning(
+                "audio_transcription_failed tenant=%s phone_tail=%s code=%s",
+                tenant_id,
+                _phone_tail(phone),
+                result.code,
+            )
             await _send_audio_fallback(team, phone, session_id, result.fallback_message)
             _record_observability(
                 tenant_id=tenant_id,
@@ -261,12 +289,52 @@ async def _process_audio_and_respond(
                 status=result.code,
             )
             return
+        logger.info(
+            "audio_transcribed tenant=%s phone_tail=%s text_length=%d",
+            tenant_id,
+            _phone_tail(phone),
+            len(result.text.strip()),
+        )
 
-        await _process_and_respond(team, result.text.strip(), phone, session_id, lead_id, tenant_id)
+        response = await team.process(
+            message=result.text.strip(),
+            phone=phone,
+            session_id=session_id,
+            lead_id=lead_id,
+        )
+        logger.info(
+            "audio_agent_processed tenant=%s phone_tail=%s agent=%s response_length=%d latency_ms=%s",
+            tenant_id,
+            _phone_tail(phone),
+            response.agent_used,
+            len(response.response or ""),
+            round(response.latency_ms),
+        )
+        _record_observability(
+            tenant_id=tenant_id,
+            phone=phone,
+            agent_used=response.agent_used,
+            latency_ms=response.latency_ms,
+            status="audio_ok",
+        )
+        logger.info(
+            "audio_send_started tenant=%s phone_tail=%s response_length=%d",
+            tenant_id,
+            _phone_tail(phone),
+            len(response.response or ""),
+        )
+        await team.send_response(phone=phone, text=response.response, session_id=session_id)
+        logger.info(
+            "audio_send_success tenant=%s phone_tail=%s",
+            tenant_id,
+            _phone_tail(phone),
+        )
     except Exception as exc:
         logger.error(
-            "Failed to process audio webhook message",
-            extra={"tenant_id": tenant_id, "error_type": type(exc).__name__},
+            "audio_send_failed tenant=%s phone_tail=%s error_type=%s",
+            tenant_id,
+            _phone_tail(phone),
+            type(exc).__name__,
         )
         await _send_audio_fallback(team, phone, session_id, DEFAULT_FALLBACK_MESSAGE)
 
