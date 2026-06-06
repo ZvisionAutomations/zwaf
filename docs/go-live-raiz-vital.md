@@ -1,18 +1,24 @@
 # Go-Live Runbook — Raiz Vital (Lívia + Caio)
 
 > Ordem segura para colocar os agentes WhatsApp 100% funcionais.
-> EC2: `18.228.193.55` (sa-east-1) · SSH: `ssh -i sofia-sdr-prod.pem ubuntu@18.228.193.55`
-> Ajuste `~/zwaf` se o checkout estiver em outro path.
+> Instância: `raiz-vital-zwaf-app` · EC2 `i-000571bfa6d74246b` (`c7i-flex.large`, sa-east-1)
+> Elastic IP: `56.125.161.233` · path na VPS: `/opt/zwaf` · env-file: `.env.raiz-vital`
+> SSH: `ssh -i ~/.ssh/raiz-vital-zwaf-key.pem ubuntu@56.125.161.233`
+> (NÃO usar `sofia-sdr-prod.pem` nem `18.228.193.55` — instância antiga, desativada.)
 
 Cada passo é **idempotente** e o bloco 0 é **read-only** (não altera nada). Rode o 0
 primeiro e decida o resto com base na saída.
+
+> ⚠️ **Drift conhecido:** a VPS teve o `docker-compose.client.yml` editado à mão
+> (SuperFrete) fora do GitHub. Antes do `git pull` (passo 1), trate as edições
+> locais para o pull não falhar.
 
 ---
 
 ## 0. Pré-flight (READ-ONLY — não muda estado)
 
 ```bash
-cd ~/zwaf
+cd /opt/zwaf
 DC="docker compose -f docker-compose.client.yml"
 
 # A) Serviços rodando
@@ -40,21 +46,36 @@ curl -s http://localhost:8080/instance/fetchInstances -H "apikey: $EVOLUTION_API
 curl -s http://localhost:8000/health; echo
 
 # G) Código deployado (a VPS já tem a 004?)
-git -C ~/zwaf log --oneline -3
+git -C /opt/zwaf log --oneline -3
 ```
 
 ---
 
-## 1. Atualizar o código da VPS
+## 1. Atualizar o código da VPS (drift-safe)
+
+A VPS pode ter o `docker-compose.client.yml` editado localmente (SuperFrete). O fix
+do repo é **superset** (SuperFrete + PII), então é seguro descartar a edição local:
 
 ```bash
-cd ~/zwaf
+cd /opt/zwaf
 git fetch origin
-git checkout main && git pull origin main   # traz story-034 (estoque) + fix do compose
+
+# Ver se há edições locais não commitadas (esp. no compose)
+git status --short
+
+# Se o compose aparecer modificado, guarde a edição local antes do pull:
+git stash push -m "vps-local-compose" -- docker-compose.client.yml 2>/dev/null || true
+
+git checkout main && git pull origin main   # traz story-034 + fix do compose (PII+SuperFrete)
+
+# Confira que o compose do repo tem as chaves PII e SuperFrete:
+grep -c ZWAF_PII_FERNET_KEY docker-compose.client.yml   # esperado: 1
+grep -c SUPERFRETE_TOKEN     docker-compose.client.yml   # esperado: 1
+# Se OK, pode descartar o stash local: git stash drop
 ```
 
 > O fix do compose adiciona `ZWAF_PII_FERNET_KEY`, `ZWAF_PII_HASH_SALT` e os
-> `SUPERFRETE_*` ao container `zwaf-api` (antes não eram injetados).
+> `SUPERFRETE_*` ao container `zwaf-api` (antes não eram injetados no repo).
 
 ---
 
@@ -64,7 +85,7 @@ As migrations **não rodam no boot**; o mount `/docker-entrypoint-initdb.d` só 
 na primeira inicialização do Postgres (volume vazio). Com banco existente, aplique à mão:
 
 ```bash
-cd ~/zwaf
+cd /opt/zwaf
 DC="docker compose -f docker-compose.client.yml"
 docker exec -i $($DC ps -q postgres) \
   psql -U zwaf -d zwaf_raiz_vital < infra/migrations/004_inventory_reservations.sql
@@ -80,7 +101,7 @@ docker exec -i $($DC ps -q postgres) \
 
 ## 3. Preencher segredos no `.env` da VPS
 
-Edite `~/zwaf/.env.livia-raiz-vital` (NUNCA commitar). Mínimo para vender:
+Edite `/opt/zwaf/.env.raiz-vital` (NUNCA commitar). Mínimo para vender:
 
 ```bash
 # Gere a chave de PII NO SERVIDOR (não cole de fora):
@@ -104,8 +125,8 @@ Checklist de variáveis (ver `.env.example` para a lista completa):
 ## 4. Recriar o container para pegar o novo env
 
 ```bash
-cd ~/zwaf
-docker compose -f docker-compose.client.yml --env-file .env.livia-raiz-vital up -d --build zwaf-api
+cd /opt/zwaf
+docker compose -f docker-compose.client.yml --env-file .env.raiz-vital up -d --build zwaf-api
 
 # Confirmar que as chaves PII chegaram:
 DC="docker compose -f docker-compose.client.yml"
@@ -137,8 +158,8 @@ $RUN adjust --tenant caio-alpha-pulse --product alpha-pulse --delta <N> --reason
 Sem isto, reservas expiradas seguram estoque para sempre. Crontab a cada 10 min:
 
 ```cron
-*/10 * * * * cd ~/zwaf && docker compose -f docker-compose.client.yml exec -T zwaf-api python -m harnesses.inventory_cli release-expired --tenant livia-raiz-vital
-*/10 * * * * cd ~/zwaf && docker compose -f docker-compose.client.yml exec -T zwaf-api python -m harnesses.inventory_cli release-expired --tenant caio-alpha-pulse
+*/10 * * * * cd /opt/zwaf && docker compose -f docker-compose.client.yml exec -T zwaf-api python -m harnesses.inventory_cli release-expired --tenant livia-raiz-vital
+*/10 * * * * cd /opt/zwaf && docker compose -f docker-compose.client.yml exec -T zwaf-api python -m harnesses.inventory_cli release-expired --tenant caio-alpha-pulse
 ```
 
 ---
