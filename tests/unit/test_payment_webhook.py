@@ -209,3 +209,146 @@ def test_payment_paid_event_marks_order_paid(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {"status": "accepted"}
     assert any("UPDATE orders" in q and "status = 'paid'" in q for q in fake_conn.calls)
+
+
+# ---------------------------------------------------------------------------
+# Inventory effects (story-034)
+# ---------------------------------------------------------------------------
+
+
+class _Tx:
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *exc):
+        return None
+
+
+class FakeTxConnection:
+    def __init__(self):
+        self.calls: list[str] = []
+
+    async def execute(self, query, *args):
+        self.calls.append(query)
+        if "INSERT INTO payment_events" in query:
+            return "INSERT 0 1"
+        return "UPDATE 1"
+
+    def transaction(self):
+        return _Tx(self)
+
+    async def close(self):
+        return None
+
+
+def _post_event(client, *, event, event_id):
+    return client.post(
+        "/payment/livia-raiz-vital",
+        headers={"asaas-access-token": "webhook-token"},
+        json={
+            "id": event_id,
+            "event": event,
+            "payment": {
+                "id": "pay_123",
+                "value": 165.90,
+                "externalReference": "livia-raiz-vital:5511999990001:new-woman-1:nw-001",
+            },
+        },
+    )
+
+
+def _wire_db(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://zwaf:test@postgres:5432/zwaf")
+    fake_conn = FakeTxConnection()
+
+    async def fake_connect(_db_url):
+        return fake_conn
+
+    monkeypatch.setattr(payment_webhook.asyncpg, "connect", fake_connect)
+    return fake_conn
+
+
+def test_paid_event_confirms_inventory_reservation(monkeypatch):
+    client = _client(monkeypatch)
+    _wire_db(monkeypatch)
+    seen = {}
+
+    async def fake_confirm(conn, *, tenant_id, payment_id):
+        seen["confirm"] = (tenant_id, payment_id)
+        return "confirmed"
+
+    monkeypatch.setattr(payment_webhook, "confirm_sale_for_payment_conn", fake_confirm)
+
+    response = _post_event(client, event="PAYMENT_RECEIVED", event_id="evt_paid")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    assert seen["confirm"] == ("livia-raiz-vital", "pay_123")
+
+
+def test_cancelled_event_releases_inventory_reservation(monkeypatch):
+    client = _client(monkeypatch)
+    _wire_db(monkeypatch)
+    seen = {}
+
+    async def fake_release(conn, *, tenant_id, payment_id, reason="cancelled before payment"):
+        seen["release"] = (tenant_id, payment_id)
+        return True
+
+    monkeypatch.setattr(payment_webhook, "release_reservation_for_payment_conn", fake_release)
+
+    response = _post_event(client, event="PAYMENT_DELETED", event_id="evt_cancel")
+
+    assert response.status_code == 200
+    assert seen["release"] == ("livia-raiz-vital", "pay_123")
+
+
+def test_refund_event_marks_review_without_restocking(monkeypatch):
+    client = _client(monkeypatch)
+    _wire_db(monkeypatch)
+    seen = {}
+
+    async def fake_refund(conn, *, tenant_id, payment_id):
+        seen["refund"] = (tenant_id, payment_id)
+        return True
+
+    monkeypatch.setattr(payment_webhook, "mark_refund_review_conn", fake_refund)
+
+    response = _post_event(client, event="PAYMENT_REFUNDED", event_id="evt_refund")
+
+    assert response.status_code == 200
+    assert seen["refund"] == ("livia-raiz-vital", "pay_123")
+
+
+def test_duplicate_paid_event_does_not_confirm_inventory_twice(monkeypatch):
+    client = _client(monkeypatch)
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://zwaf:test@postgres:5432/zwaf")
+    confirms = []
+
+    class DupConnection(FakeTxConnection):
+        async def execute(self, query, *args):
+            self.calls.append(query)
+            if "INSERT INTO payment_events" in query:
+                return "INSERT 0 0"  # duplicate
+            return "UPDATE 1"
+
+    fake_conn = DupConnection()
+
+    async def fake_connect(_db_url):
+        return fake_conn
+
+    async def fake_confirm(conn, *, tenant_id, payment_id):
+        confirms.append(payment_id)
+        return "confirmed"
+
+    monkeypatch.setattr(payment_webhook.asyncpg, "connect", fake_connect)
+    monkeypatch.setattr(payment_webhook, "confirm_sale_for_payment_conn", fake_confirm)
+
+    response = _post_event(client, event="PAYMENT_RECEIVED", event_id="evt_dup")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted_duplicate"}
+    assert confirms == []  # idempotency guard prevented a second stock confirmation
