@@ -80,6 +80,42 @@ async def test_load_audio_content_decodes_direct_base64_audio():
 
 
 @pytest.mark.asyncio
+async def test_load_audio_content_prefers_evolution_for_encrypted_whatsapp_media(monkeypatch):
+    audio_bytes = b"decoded-whatsapp-audio"
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {"base64": base64.b64encode(audio_bytes).decode("ascii")}
+    client = AsyncMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    client.post = AsyncMock(return_value=response)
+    client.stream = MagicMock()
+    monkeypatch.setattr("httpx.AsyncClient", lambda *args, **kwargs: client)
+
+    result = await load_audio_content(
+        message={
+            "audioMessage": {
+                "mimetype": "audio/ogg; codecs=opus",
+                "url": "https://mmg.whatsapp.net/v/t62.7117-24/audio.enc",
+                "directPath": "/v/t62.7117-24/audio.enc",
+                "mediaKey": {"0": 1},
+                "seconds": 4,
+            }
+        },
+        instance="livia-raiz-vital-1",
+        message_key={"id": "msg-1"},
+        evolution_url="http://evolution-api:8080",
+        evolution_api_key="test-key",
+    )
+
+    assert isinstance(result, AudioContent)
+    assert result.bytes_data == audio_bytes
+    url_arg, _ = client.post.call_args
+    assert "getBase64FromMediaMessage/livia-raiz-vital-1" in url_arg[0]
+    assert client.stream.call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_load_audio_content_rejects_unsupported_mime(monkeypatch):
     monkeypatch.setenv("TRANSCRIPTION_ALLOWED_MIME_TYPES", "audio/ogg")
 

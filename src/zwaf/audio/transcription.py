@@ -174,6 +174,21 @@ async def load_audio_content(
             duration_seconds=duration_seconds,
         )
 
+    if _looks_like_evolution_encrypted_media(descriptor):
+        evolution_audio = await _load_audio_from_evolution(
+            instance=instance,
+            message_key=message_key,
+            evolution_url=evolution_url,
+            evolution_api_key=evolution_api_key,
+            filename=filename,
+            content_type=content_type,
+            message_id=message_id,
+            duration_seconds=duration_seconds,
+        )
+        if isinstance(evolution_audio, AudioContent):
+            return evolution_audio
+        return evolution_audio
+
     media_url = _first_string(descriptor, ("url", "mediaUrl", "directPath"))
     if media_url and media_url.startswith(("http://", "https://")):
         return await _download_audio_url(
@@ -296,6 +311,14 @@ def _decode_base64_audio(
         message_id=message_id,
         duration_seconds=duration_seconds,
     )
+
+
+def _looks_like_evolution_encrypted_media(descriptor: dict[str, Any]) -> bool:
+    """Detect Baileys/Evolution encrypted WhatsApp media that needs API decoding."""
+    if descriptor.get("mediaKey") or descriptor.get("directPath"):
+        return True
+    url = _first_string(descriptor, ("url", "mediaUrl"))
+    return ".enc" in urlsplit(url).path if url else False
 
 
 async def _download_audio_url(
