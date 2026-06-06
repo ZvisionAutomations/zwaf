@@ -10,9 +10,22 @@ from typing import Any, Callable, Optional
 import httpx
 
 from zwaf.conversion.checkout_policy import normalize_delivery_address, validate_checkout_ready
-from zwaf.memory.order_store import create_order_draft, mark_order_payment_created
+from zwaf.memory.inventory_store import release_reservation, reserve_inventory
+from zwaf.memory.order_store import (
+    create_order_draft,
+    mark_order_payment_created,
+    mark_order_payment_failed,
+)
 
 logger = logging.getLogger("zwaf.tools.payment")
+
+# Safe checkout replies — never promise availability before the reservation
+# succeeds (story-034 UX rules).
+_MSG_UNAVAILABLE = (
+    "Nao consegui gerar esse pedido com seguranca agora. "
+    "Posso chamar a equipe ou te avisar quando voltar."
+)
+_MSG_GENERIC_ERROR = "Erro ao gerar link de pagamento. Por favor, tente novamente."
 
 _PRODUCT_NAMES = {
     "new-woman": "New Woman",
@@ -105,6 +118,23 @@ def make_payment_link_generator(
         if _db_required_for_checkout() and not order_id:
             return "Erro ao gerar link: pedido nao foi registrado com seguranca."
 
+        # Reserve stock atomically BEFORE asking Asaas for a payment link. If we
+        # cannot guarantee a unit, we never create the charge (story-034).
+        reservation = await reserve_inventory(
+            tenant_id=tenant_id,
+            product_id=_product_slug(product_id),
+            quantity=resolved_qty,
+            order_id=order_id,
+        )
+        if not reservation.ok:
+            if reservation.status == "unavailable":
+                logger.info(
+                    "Checkout blocked: insufficient stock",
+                    extra={"tenant_id": tenant_id, "product_id": product_id},
+                )
+                return _MSG_UNAVAILABLE
+            return _MSG_GENERIC_ERROR
+
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 customer_id = await _create_or_reuse_customer(
@@ -116,7 +146,8 @@ def make_payment_link_generator(
                     customer_document=customer_document,
                 )
                 if not customer_id:
-                    return "Erro ao gerar link de pagamento. Por favor, tente novamente."
+                    await _release_failed_reservation(order_id)
+                    return _MSG_GENERIC_ERROR
 
                 resp = await client.post(
                     f"{asaas['base_url']}/payments",
@@ -147,13 +178,16 @@ def make_payment_link_generator(
                     )
                     return url
                 logger.error("Asaas returned no payment URL: %s", _redact(data))
+                await _release_failed_reservation(order_id)
                 return "Erro ao gerar link. Tente novamente em instantes."
         except httpx.HTTPStatusError as e:
             logger.error("Asaas HTTP error %s: %s", e.response.status_code, e.response.text[:200])
-            return "Erro ao gerar link de pagamento. Por favor, tente novamente."
+            await _release_failed_reservation(order_id)
+            return _MSG_GENERIC_ERROR
         except Exception as e:
             logger.error("Payment link generation failed: %s", e)
-            return "Erro ao gerar link de pagamento. Por favor, tente novamente."
+            await _release_failed_reservation(order_id)
+            return _MSG_GENERIC_ERROR
 
     generate_payment_link.__name__ = "generate_payment_link"
     return generate_payment_link
@@ -414,6 +448,14 @@ def _product_slug(product_id: str) -> str:
         if normalized.startswith(slug):
             return slug
     return normalized
+
+
+async def _release_failed_reservation(order_id: str) -> None:
+    """Free a stock reservation and flag the order when Asaas link creation fails."""
+    if not order_id:
+        return
+    await release_reservation(order_id=order_id, reason="payment_link_failed")
+    await mark_order_payment_failed(order_id=order_id)
 
 
 def make_payment_status_checker() -> Callable:

@@ -172,6 +172,30 @@ async def mark_order_payment_created(
         logger.error("order payment update failed: %s", exc)
 
 
+async def mark_order_payment_failed(*, order_id: str) -> None:
+    """Flag an order whose Asaas payment link could not be created."""
+    db_url = _db_url()
+    if not db_url or not order_id:
+        return
+    try:
+        import asyncpg
+
+        conn = await asyncpg.connect(db_url)
+        try:
+            await conn.execute(
+                """
+                UPDATE orders
+                SET status = 'payment_link_failed', updated_at = NOW()
+                WHERE id = $1 AND status NOT IN ('paid', 'stock_confirmed')
+                """,
+                order_id,
+            )
+        finally:
+            await conn.close()
+    except Exception as exc:
+        logger.error("order payment failure update failed: %s", exc)
+
+
 async def get_order_shipping_context(*, order_id: str) -> dict[str, Any]:
     db_url = _db_url()
     if not db_url or not order_id:

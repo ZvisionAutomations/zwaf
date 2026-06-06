@@ -16,6 +16,12 @@ from typing import Any, Optional
 import asyncpg
 from fastapi import APIRouter, Header, HTTPException, Request
 
+from zwaf.memory.inventory_store import (
+    confirm_sale_for_payment_conn,
+    mark_refund_review_conn,
+    release_reservation_for_payment_conn,
+)
+
 logger = logging.getLogger("zwaf.api.payment_webhook")
 
 router = APIRouter()
@@ -141,6 +147,8 @@ async def receive_payment_webhook(
 
             await _sync_order_status(conn, tenant_id, payment_id, status)
 
+            await _apply_inventory_effects(conn, tenant_id, event, payment_id, status)
+
             if event in _PAID_EVENTS and lead_phone:
                 purchase_entry = json.dumps(
                     [
@@ -217,6 +225,41 @@ async def _sync_order_status(
             tenant_id,
             payment_id,
         )
+
+
+async def _apply_inventory_effects(
+    conn: Any,
+    tenant_id: str,
+    event: str,
+    payment_id: str,
+    status: str,
+) -> None:
+    """Confirm, release or flag stock based on the payment event (story-034).
+
+    Runs only after the payment_events idempotency guard, so each event is
+    applied at most once. Wrapped in a transaction for atomicity; inventory
+    failures must not break payment acknowledgement, so errors are logged.
+    """
+    try:
+        async with conn.transaction():
+            if event in _PAID_EVENTS:
+                outcome = await confirm_sale_for_payment_conn(
+                    conn, tenant_id=tenant_id, payment_id=payment_id
+                )
+                logger.info(
+                    "Inventory confirm outcome",
+                    extra={"tenant_id": tenant_id, "payment_id": payment_id, "outcome": outcome},
+                )
+            elif status == "CANCELLED":
+                await release_reservation_for_payment_conn(
+                    conn, tenant_id=tenant_id, payment_id=payment_id
+                )
+            elif status in {"REFUNDED", "PARTIALLY_REFUNDED"}:
+                await mark_refund_review_conn(
+                    conn, tenant_id=tenant_id, payment_id=payment_id
+                )
+    except Exception as exc:
+        logger.error("Inventory effect failed for %s: %s", payment_id, exc)
 
 
 def _parse_external_reference(reference: str) -> tuple[str, str]:

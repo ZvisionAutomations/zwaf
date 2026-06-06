@@ -4,6 +4,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from zwaf.memory.inventory_store import ReservationResult
 from zwaf.tools import payment
 
 
@@ -406,3 +407,125 @@ async def test_generate_payment_link_does_not_use_default_document_for_real_orde
 
     assert result == "Erro ao gerar link: dados obrigatorios do pedido incompletos."
     assert fake_client.calls == []
+
+
+# ---------------------------------------------------------------------------
+# Inventory reservation integration (story-034)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_generate_payment_link_reserves_stock_before_asaas(monkeypatch):
+    captured: dict = {}
+
+    async def fake_reserve(**kwargs):
+        captured.update(kwargs)
+        return ReservationResult(ok=True, status="reserved")
+
+    monkeypatch.setattr(payment, "reserve_inventory", fake_reserve)
+    fake_client = FakeAsyncClient()
+    monkeypatch.setattr(payment.httpx, "AsyncClient", lambda **kwargs: fake_client)
+    monkeypatch.setenv("ASAAS_API_KEY", "test-asaas-key")
+    monkeypatch.setenv("ASAAS_BASE_URL", "https://api-sandbox.asaas.com/v3")
+
+    generate_payment_link = payment.make_payment_link_generator(
+        "livia-raiz-vital",
+        {"products": TIERED_PRODUCTS},
+    )
+
+    result = await generate_payment_link(
+        "new-woman",
+        "5511999990001",
+        customer_name="Maria Silva",
+        customer_document=VALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+        billing_type="PIX",
+        quantity=3,
+    )
+
+    assert result == "https://asaas.test/i/pay_123"
+    # Reserved the base product slug for the requested quantity.
+    assert captured["product_id"] == "new-woman"
+    assert captured["quantity"] == 3
+    assert captured["tenant_id"] == "livia-raiz-vital"
+
+
+@pytest.mark.asyncio
+async def test_generate_payment_link_blocks_and_skips_asaas_when_unavailable(monkeypatch):
+    async def fake_reserve(**kwargs):
+        return ReservationResult(ok=False, status="unavailable")
+
+    monkeypatch.setattr(payment, "reserve_inventory", fake_reserve)
+    fake_client = FakeAsyncClient()
+    monkeypatch.setattr(payment.httpx, "AsyncClient", lambda **kwargs: fake_client)
+    monkeypatch.setenv("ASAAS_API_KEY", "test-asaas-key")
+    monkeypatch.setenv("ASAAS_BASE_URL", "https://api-sandbox.asaas.com/v3")
+
+    generate_payment_link = payment.make_payment_link_generator(
+        "livia-raiz-vital",
+        {"products": PRODUCTS},
+    )
+
+    result = await generate_payment_link(
+        "new-woman-1",
+        "5511999990001",
+        customer_name="Maria Silva",
+        customer_document=VALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+    )
+
+    assert result == payment._MSG_UNAVAILABLE
+    assert fake_client.calls == []  # Asaas never contacted
+
+
+@pytest.mark.asyncio
+async def test_generate_payment_link_releases_reservation_on_asaas_error(monkeypatch):
+    released: list = []
+    marked_failed: list = []
+
+    async def fake_order_draft(**kwargs):
+        return "order-123"
+
+    async def fake_reserve(**kwargs):
+        return ReservationResult(ok=True, status="reserved")
+
+    async def fake_release(**kwargs):
+        released.append(kwargs["order_id"])
+        return True
+
+    async def fake_mark_failed(**kwargs):
+        marked_failed.append(kwargs["order_id"])
+
+    monkeypatch.setattr(payment, "create_order_draft", fake_order_draft)
+    monkeypatch.setattr(payment, "reserve_inventory", fake_reserve)
+    monkeypatch.setattr(payment, "release_reservation", fake_release)
+    monkeypatch.setattr(payment, "mark_order_payment_failed", fake_mark_failed)
+
+    class ErrorClient(FakeAsyncClient):
+        async def post(self, url: str, headers: dict, json: dict):
+            self.calls.append({"url": url, "headers": headers, "json": json})
+            if url.endswith("/customers"):
+                return FakeResponse({"id": "cus_123"})
+            return FakeResponse({"errors": [{"description": "invalid"}]}, status_code=401)
+
+    fake_client = ErrorClient()
+    monkeypatch.setattr(payment.httpx, "AsyncClient", lambda **kwargs: fake_client)
+    monkeypatch.setenv("ASAAS_API_KEY", "test-asaas-key")
+    monkeypatch.setenv("ASAAS_BASE_URL", "https://api-sandbox.asaas.com/v3")
+
+    generate_payment_link = payment.make_payment_link_generator(
+        "livia-raiz-vital",
+        {"products": PRODUCTS},
+    )
+
+    result = await generate_payment_link(
+        "new-woman-1",
+        "5511999990001",
+        customer_name="Maria Silva",
+        customer_document=VALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+    )
+
+    assert result == payment._MSG_GENERIC_ERROR
+    assert released == ["order-123"]  # reservation freed
+    assert marked_failed == ["order-123"]  # order flagged payment_link_failed
