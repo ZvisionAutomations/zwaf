@@ -38,7 +38,7 @@ def make_guarded_payment_link_generator(
                     "Nao vou gerar esse link por aqui. Esse produto e atendido por "
                     "outro consultor da Raiz Vital."
                 )
-            missing = ", ".join(checkout.missing_fields)
+            missing = _format_missing_checkout_fields(checkout.missing_fields)
             return (
                 "Antes de te mandar o link, preciso completar o pedido com "
                 f"estes dados: {missing}."
@@ -85,3 +85,24 @@ def make_guarded_payment_link_generator(
 
     generate_payment_link.__name__ = "generate_payment_link"
     return generate_payment_link
+
+
+def _format_missing_checkout_fields(missing_fields: list[str]) -> str:
+    labels = {
+        "customer_name": "nome completo",
+        "customer_document": "CPF/CNPJ valido",
+        "delivery_address.postal_code": "CEP",
+        "delivery_address.street": "rua",
+        "delivery_address.number": "numero",
+        "delivery_address.district": "bairro",
+        "delivery_address.city": "cidade",
+        "delivery_address.state": "UF",
+    }
+    parts = [labels.get(field, field) for field in missing_fields]
+    if not parts:
+        return "os dados minimos do pedido"
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2:
+        return f"{parts[0]} e {parts[1]}"
+    return ", ".join(parts[:-1]) + f" e {parts[-1]}"

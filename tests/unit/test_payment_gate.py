@@ -6,7 +6,7 @@ import pytest
 from zwaf.conversion.payment_gate import make_guarded_payment_link_generator
 
 
-VALID_DOCUMENT = "123" + "456" + "789" + "01"
+VALID_DOCUMENT = "529" + "982" + "247" + "25"
 VALID_ADDRESS = {
     "postal_code": "01001000",
     "street": "Rua Teste",
@@ -30,9 +30,10 @@ async def test_guard_blocks_link_without_checkout_data(monkeypatch):
         buying_intent_evidence="quero fechar agora",
     )
 
-    assert "customer_name" in result
-    assert "customer_document" in result
-    assert "delivery_address.postal_code" in result
+    assert "nome completo" in result
+    assert "CPF/CNPJ valido" in result
+    assert "CEP" in result
+    assert "rua" in result
 
 
 @pytest.mark.asyncio
@@ -97,7 +98,7 @@ async def test_guard_allows_alpha_pulse_tiered_for_caio():
     )
 
     assert "New Woman" not in result
-    assert "customer_name" in result
+    assert "nome completo" in result
 
 
 @pytest.mark.asyncio
