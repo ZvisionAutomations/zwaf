@@ -170,3 +170,38 @@ async def test_guard_allows_generate_link_request_after_checkout_data(monkeypatc
     assert result == "https://asaas.example/pay/456"
     assert calls[0]["billing_type"] == "PIX"
     assert calls[0]["quantity"] == 1
+
+
+@pytest.mark.asyncio
+async def test_guard_does_not_loop_on_weak_followup_after_checkout_complete(monkeypatch):
+    calls = []
+
+    def fake_raw_generator(tenant_id, payment_config):
+        async def generate_payment_link(**kwargs):
+            calls.append(kwargs)
+            return "https://asaas.example/pay/789"
+
+        return generate_payment_link
+
+    monkeypatch.setattr(
+        "zwaf.conversion.payment_gate.make_payment_link_generator",
+        fake_raw_generator,
+    )
+    generator = make_guarded_payment_link_generator(
+        "livia-raiz-vital",
+        {"products": {"new-woman": {"qty": 1, "price_cents_pix": 14900}}},
+    )
+
+    result = await generator(
+        product_id="new-woman",
+        customer_phone="5511999990001",
+        customer_name="Maria Silva",
+        customer_document=VALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+        buying_intent_evidence="",
+        billing_type="PIX",
+        quantity=1,
+    )
+
+    assert result == "https://asaas.example/pay/789"
+    assert len(calls) == 1

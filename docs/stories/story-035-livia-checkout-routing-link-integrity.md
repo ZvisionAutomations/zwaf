@@ -25,7 +25,7 @@ como CPF e respondeu que havia enviado link sem incluir URL.
 3. Mensagens sobre gerar, mandar ou enviar link de pagamento roteiam para `vendedor`, sem fallback para `suporte`.
 4. O prompt de cobranca nao instrui checkout novo nem promete link sem URL.
 5. O prompt de vendedor exige que resposta final contenha a URL retornada pela tool; se nao houver URL, deve dizer que houve falha e pedir o dado faltante ou escalar.
-6. Depois que todos os dados obrigatorios foram coletados, confirmacoes como "sim", "confirmo" e "pode gerar o link" liberam a geracao do link sem novo loop de confirmacao.
+6. Depois que todos os dados obrigatorios foram coletados, confirmacoes como "sim", "confirmo" e "pode gerar o link" liberam a geracao do link; evidencias fracas nao podem voltar com loop de confirmacao.
 7. Testes unitarios cobrem a regressao do router e do gate de pagamento.
 
 ## Fora de escopo

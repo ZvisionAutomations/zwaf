@@ -70,7 +70,18 @@ def make_guarded_payment_link_generator(
         if decision.action == ConversionAction.HANDLE_OBJECTION:
             return "Antes do link, deixa eu te ajudar a avaliar o custo-beneficio e tirar sua duvida."
 
-        return "Antes de te mandar o link, confirma pra mim: voce quer fechar o pedido agora?"
+        if decision.action in {ConversionAction.ASK_FOLLOWUP, ConversionAction.ANSWER_QUESTION}:
+            return await raw_generator(
+                product_id=product_id,
+                customer_phone=customer_phone,
+                customer_name=customer_name,
+                customer_document=customer_document,
+                delivery_address=delivery_address,
+                billing_type=billing_type,
+                quantity=quantity,
+            )
+
+        return "Nao consegui confirmar o fechamento do pedido neste momento."
 
     generate_payment_link.__name__ = "generate_payment_link"
     return generate_payment_link
