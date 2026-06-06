@@ -52,6 +52,17 @@ class LeadSignal:
 
 
 _HIGH_INTENT_PATTERNS = [
+    r"^\s*sim\s*$",
+    r"\bsim,?\s*(pode|quero|confirmo)\b",
+    r"\bconfirmo\b",
+    r"\bconfirmado\b",
+    r"\bpode gerar\b",
+    r"\bpode mandar\b",
+    r"\bpode enviar\b",
+    r"\bgera(?:r)? o link\b",
+    r"\bgerar link\b",
+    r"\bgerar o link\b",
+    r"\bme envia o link\b",
     r"\bquero comprar\b",
     r"\bcomprar agora\b",
     r"\bmanda(?:r)? o link\b",
