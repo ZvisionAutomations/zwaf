@@ -73,6 +73,12 @@ class RouterAgent:
                 return await self._fallback_with_history(stripped, phone)
             return RouteResult(agent_name="vendedor", confidence=0.95)
 
+        if _is_existing_payment_problem(stripped):
+            return RouteResult(agent_name="cobranca", confidence=0.95, via_llm=False)
+
+        if _is_new_checkout_payment_intent(stripped):
+            return RouteResult(agent_name="vendedor", confidence=0.95, via_llm=False)
+
         # Keyword match
         keyword_result = self._keyword_match(stripped)
         if keyword_result is not None:
@@ -166,6 +172,50 @@ class RouterAgent:
 # ─────────────────────────────────────────────────────────────
 
 _GREETING_WORDS = {"oi", "olá", "ola", "hey", "hi", "bom dia", "boa tarde", "boa noite", "e aí", "eai"}
+
+
+_EXISTING_PAYMENT_PROBLEM_TERMS = (
+    "nao consegui pagar",
+    "não consegui pagar",
+    "nao consigo pagar",
+    "não consigo pagar",
+    "link expirou",
+    "link vencido",
+    "erro no pagamento",
+    "problema com pagamento",
+    "pagamento deu erro",
+    "pix expirou",
+)
+
+_NEW_CHECKOUT_PAYMENT_TERMS = (
+    "gerar link",
+    "gera o link",
+    "gerar o link",
+    "gerar um link",
+    "mandar link",
+    "manda o link",
+    "enviar link",
+    "envia o link",
+    "link de pagamento",
+    "quero pagar",
+    "pagar via pix",
+    "pagar por pix",
+    "pix",
+    "comprar",
+    "quero comprar",
+    "fechar pedido",
+    "finalizar pedido",
+)
+
+
+def _is_existing_payment_problem(message: str) -> bool:
+    msg_lower = message.lower()
+    return any(term in msg_lower for term in _EXISTING_PAYMENT_PROBLEM_TERMS)
+
+
+def _is_new_checkout_payment_intent(message: str) -> bool:
+    msg_lower = message.lower()
+    return any(term in msg_lower for term in _NEW_CHECKOUT_PAYMENT_TERMS)
 
 
 def _is_greeting_only(message: str) -> bool:

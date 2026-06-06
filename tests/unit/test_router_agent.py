@@ -10,7 +10,25 @@ from zwaf.core.tenant import RouterConfig
 
 
 KEYWORDS = {
-    "vendedor": ["quero comprar", "quanto custa", "como funciona", "tem desconto", "valor", "pix", "pagar via pix", "quero pagar"],
+    "vendedor": [
+        "quero comprar",
+        "quanto custa",
+        "como funciona",
+        "tem desconto",
+        "valor",
+        "pix",
+        "pagar via pix",
+        "pagar por pix",
+        "quero pagar",
+        "gerar link",
+        "gerar o link",
+        "mandar link",
+        "manda o link",
+        "enviar link",
+        "link de pagamento",
+        "fechar pedido",
+        "finalizar pedido",
+    ],
     "recompra": ["quero pedir de novo", "acabou", "renovar", "segundo pote"],
     "suporte": ["não chegou", "problema", "dúvida", "como tomar", "efeito"],
     "cobranca": ["não consegui pagar", "nao consegui pagar", "link expirou", "erro no pagamento", "problema com pagamento"],
@@ -52,9 +70,35 @@ class TestKeywordRouting:
         assert result.agent_name == "vendedor"
 
     @pytest.mark.asyncio
+    async def test_payment_link_generation_routes_to_vendedor_without_llm(self):
+        router = make_router()
+        with patch.object(
+            router,
+            "_llm_classify",
+            AsyncMock(return_value=RouteResult("suporte", 0.75, via_llm=True)),
+        ) as mock_llm:
+            result = await router.route(
+                "nao consigo gerar link de pagamento",
+                phone="5511999990001",
+            )
+
+        assert result.agent_name == "vendedor"
+        assert result.via_llm is False
+        mock_llm.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_payment_problem_routes_to_cobranca(self):
         router = make_router()
         result = await router.route("nao consegui pagar o link", phone="5511999990001")
+        assert result.agent_name == "cobranca"
+
+    @pytest.mark.asyncio
+    async def test_current_payment_failure_routes_to_cobranca_before_checkout_terms(self):
+        router = make_router()
+        result = await router.route(
+            "nao consigo pagar o link de pagamento",
+            phone="5511999990001",
+        )
         assert result.agent_name == "cobranca"
 
     @pytest.mark.asyncio

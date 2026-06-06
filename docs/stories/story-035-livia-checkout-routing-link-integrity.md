@@ -22,9 +22,10 @@ como CPF e respondeu que havia enviado link sem incluir URL.
 
 1. Mensagens como "Pix", "quero pagar via pix" e "pagar via pix" roteiam para `vendedor`.
 2. Mensagens como "nao consegui pagar", "link expirou" e "erro no pagamento" roteiam para `cobranca`.
-3. O prompt de cobranca nao instrui checkout novo nem promete link sem URL.
-4. O prompt de vendedor exige que resposta final contenha a URL retornada pela tool; se nao houver URL, deve dizer que houve falha e pedir o dado faltante ou escalar.
-5. Testes unitarios cobrem a regressao do router.
+3. Mensagens sobre gerar, mandar ou enviar link de pagamento roteiam para `vendedor`, sem fallback para `suporte`.
+4. O prompt de cobranca nao instrui checkout novo nem promete link sem URL.
+5. O prompt de vendedor exige que resposta final contenha a URL retornada pela tool; se nao houver URL, deve dizer que houve falha e pedir o dado faltante ou escalar.
+6. Testes unitarios cobrem a regressao do router.
 
 ## Fora de escopo
 
