@@ -8,7 +8,8 @@ from zwaf.conversion.checkout_policy import (
 )
 
 
-VALID_DOCUMENT = "123" + "456" + "789" + "01"
+INVALID_DOCUMENT = "111" + "111" + "111" + "11"
+VALID_DOCUMENT = "529" + "982" + "247" + "25"
 VALID_ADDRESS = {
     "postal_code": "01001-000",
     "street": "Rua Teste",
@@ -43,6 +44,19 @@ def test_checkout_accepts_complete_new_woman_order():
     )
 
     assert result.ok is True
+
+
+def test_checkout_rejects_invalid_document_checksum():
+    result = validate_checkout_ready(
+        tenant_id="livia-raiz-vital",
+        product_id="new-woman-1",
+        customer_name="Maria Silva",
+        customer_document=INVALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+    )
+
+    assert result.ok is False
+    assert "customer_document_invalid" in result.missing_fields
 
 
 def test_opt_out_phrases_are_detected():

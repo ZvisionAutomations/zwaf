@@ -6,7 +6,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
-from zwaf.security.pii import document_type, only_digits
+from zwaf.security.pii import document_type, is_valid_document, only_digits
 
 REQUIRED_ADDRESS_FIELDS = ("postal_code", "street", "number", "district", "city", "state")
 
@@ -77,8 +77,13 @@ def validate_checkout_ready(
     missing: list[str] = []
     if not _has_full_name(customer_name):
         missing.append("customer_name")
-    if document_type(customer_document) == "unknown":
+    document = (customer_document or "").strip()
+    if not document:
+        # documento nao informado
         missing.append("customer_document")
+    elif document_type(document) == "unknown" or not is_valid_document(document):
+        # Documento informado, porem estruturalmente invalido (DV/tamanho).
+        missing.append("customer_document_invalid")
 
     address = normalize_delivery_address(delivery_address)
     for field_name in REQUIRED_ADDRESS_FIELDS:

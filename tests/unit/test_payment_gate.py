@@ -6,7 +6,7 @@ import pytest
 from zwaf.conversion.payment_gate import make_guarded_payment_link_generator
 
 
-VALID_DOCUMENT = "123" + "456" + "789" + "01"
+VALID_DOCUMENT = "529" + "982" + "247" + "25"
 VALID_ADDRESS = {
     "postal_code": "01001000",
     "street": "Rua Teste",
@@ -30,9 +30,10 @@ async def test_guard_blocks_link_without_checkout_data(monkeypatch):
         buying_intent_evidence="quero fechar agora",
     )
 
-    assert "customer_name" in result
-    assert "customer_document" in result
-    assert "delivery_address.postal_code" in result
+    assert "nome completo" in result
+    assert "CPF/CNPJ valido" in result
+    assert "CEP" in result
+    assert "rua" in result
 
 
 @pytest.mark.asyncio
@@ -97,4 +98,111 @@ async def test_guard_allows_alpha_pulse_tiered_for_caio():
     )
 
     assert "New Woman" not in result
-    assert "customer_name" in result
+    assert "nome completo" in result
+
+
+@pytest.mark.asyncio
+async def test_guard_allows_short_confirmation_after_checkout_data(monkeypatch):
+    calls = []
+
+    def fake_raw_generator(tenant_id, payment_config):
+        async def generate_payment_link(**kwargs):
+            calls.append({"tenant_id": tenant_id, **kwargs})
+            return "https://asaas.example/pay/123"
+
+        return generate_payment_link
+
+    monkeypatch.setattr(
+        "zwaf.conversion.payment_gate.make_payment_link_generator",
+        fake_raw_generator,
+    )
+    generator = make_guarded_payment_link_generator(
+        "livia-raiz-vital",
+        {"products": {"new-woman": {"qty": 1, "price_cents_pix": 14900}}},
+    )
+
+    result = await generator(
+        product_id="new-woman",
+        customer_phone="5511999990001",
+        customer_name="Maria Silva",
+        customer_document=VALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+        buying_intent_evidence="sim",
+        billing_type="PIX",
+        quantity=1,
+    )
+
+    assert result == "https://asaas.example/pay/123"
+    assert calls[0]["tenant_id"] == "livia-raiz-vital"
+    assert calls[0]["billing_type"] == "PIX"
+
+
+@pytest.mark.asyncio
+async def test_guard_allows_generate_link_request_after_checkout_data(monkeypatch):
+    calls = []
+
+    def fake_raw_generator(tenant_id, payment_config):
+        async def generate_payment_link(**kwargs):
+            calls.append(kwargs)
+            return "https://asaas.example/pay/456"
+
+        return generate_payment_link
+
+    monkeypatch.setattr(
+        "zwaf.conversion.payment_gate.make_payment_link_generator",
+        fake_raw_generator,
+    )
+    generator = make_guarded_payment_link_generator(
+        "livia-raiz-vital",
+        {"products": {"new-woman": {"qty": 1, "price_cents_pix": 14900}}},
+    )
+
+    result = await generator(
+        product_id="new-woman",
+        customer_phone="5511999990001",
+        customer_name="Maria Silva",
+        customer_document=VALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+        buying_intent_evidence="pode gerar o link de pagamento",
+        billing_type="PIX",
+        quantity=1,
+    )
+
+    assert result == "https://asaas.example/pay/456"
+    assert calls[0]["billing_type"] == "PIX"
+    assert calls[0]["quantity"] == 1
+
+
+@pytest.mark.asyncio
+async def test_guard_does_not_loop_on_weak_followup_after_checkout_complete(monkeypatch):
+    calls = []
+
+    def fake_raw_generator(tenant_id, payment_config):
+        async def generate_payment_link(**kwargs):
+            calls.append(kwargs)
+            return "https://asaas.example/pay/789"
+
+        return generate_payment_link
+
+    monkeypatch.setattr(
+        "zwaf.conversion.payment_gate.make_payment_link_generator",
+        fake_raw_generator,
+    )
+    generator = make_guarded_payment_link_generator(
+        "livia-raiz-vital",
+        {"products": {"new-woman": {"qty": 1, "price_cents_pix": 14900}}},
+    )
+
+    result = await generator(
+        product_id="new-woman",
+        customer_phone="5511999990001",
+        customer_name="Maria Silva",
+        customer_document=VALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+        buying_intent_evidence="",
+        billing_type="PIX",
+        quantity=1,
+    )
+
+    assert result == "https://asaas.example/pay/789"
+    assert len(calls) == 1

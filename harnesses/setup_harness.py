@@ -26,8 +26,6 @@ import argparse
 import asyncio
 import os
 import sys
-import time
-from typing import Optional
 
 import httpx
 
@@ -196,7 +194,7 @@ async def validate_webhook() -> None:
             if r.status_code == 200:
                 data = r.json()
                 if data.get("status") == "accepted":
-                    _ok(f"Webhook validado — ZWAF respondeu 'accepted'")
+                    _ok("Webhook validado — ZWAF respondeu 'accepted'")
                 else:
                     _warn(f"Webhook respondeu: {data}")
             else:
@@ -225,7 +223,7 @@ async def show_qr_codes() -> None:
                 if qr:
                     print(f"  [{instance}] QR Code disponivel:")
                     print(f"    -> {EVOLUTION_URL}/instance/connect/{instance}")
-                    print(f"    -> Ou acesse a Evolution API Manager")
+                    print("    -> Ou acesse a Evolution API Manager")
                 else:
                     _warn(f"QR nao disponivel para '{instance}': {data}")
             else:

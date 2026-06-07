@@ -36,7 +36,7 @@ TIERED_PRODUCTS = {
     }
 }
 
-VALID_DOCUMENT = "123" + "456" + "789" + "01"
+VALID_DOCUMENT = "529" + "982" + "247" + "25"
 VALID_ADDRESS = {
     "postal_code": "01001000",
     "street": "Rua Teste",

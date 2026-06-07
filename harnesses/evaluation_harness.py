@@ -14,10 +14,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import statistics
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
@@ -154,7 +152,7 @@ async def run_evaluation(team=None) -> None:
         status = "✓" if r.passed else "✗"
         print(f"  {r.case.input_message[:38]:<40} {r.agent_used:<12} {r.latency_ms:.0f}ms{'':<5} {status}")
 
-    print(f"\n  ── Métricas ──────────────────────────────────")
+    print("\n  ── Métricas ──────────────────────────────────")
     _print_metric("Latência P95", f"{p95_latency:.0f}ms", p95_latency < 3000, "< 3000ms")
     _print_metric("Roteamento correto", f"{routing_rate:.0%}", routing_rate > 0.90, "> 90%")
     _print_metric("Casos aprovados", f"{pass_rate:.0%}", pass_rate > 0.80, "> 80%")

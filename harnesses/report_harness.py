@@ -19,7 +19,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zwaf.reporting.daily_report import build_and_send_report, format_report
+from zwaf.reporting.daily_report import build_and_send_report, format_report  # noqa: E402
 
 
 async def harness_report_dry_run():
