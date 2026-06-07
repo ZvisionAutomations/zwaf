@@ -158,21 +158,44 @@ class ZWAFTeam:
         lead_id: str,
     ) -> str:
         """Constroi e executa o agente especializado com fallback."""
-        agent = self._build_agent(agent_name, session_id, lead_id)
+        # Sink por-request: a tool de pagamento registra aqui mensagens
+        # deterministicas de checkout (ex.: CPF invalido, dado faltante). Quando
+        # presente, ela e enviada LITERALMENTE ao cliente, sem parafrase do LLM —
+        # garante consistencia mesmo com modelos que tendem a reescrever erros.
+        payment_sink: dict[str, Any] = {}
+        agent = self._build_agent(agent_name, session_id, lead_id, result_sink=payment_sink)
         try:
             run_response = await agent.arun(message)
-            return run_response.content or ""
+            llm_reply = run_response.content or ""
         except Exception as e:
             logger.error(
                 "Agent execution failed",
                 extra={"agent": agent_name, "session_id": session_id, "error": str(e)},
             )
+            # Se a tool ja havia registrado uma mensagem deterministica antes da
+            # excecao, prefira-a a uma resposta generica de erro.
+            deterministic = payment_sink.get("deterministic_reply")
+            if deterministic:
+                return deterministic
             return (
                 "Desculpe, estou com uma dificuldade tecnica no momento. "
                 "Pode me enviar sua mensagem novamente em instantes?"
             )
 
-    def _build_agent(self, agent_name: str, session_id: str, lead_id: str):
+        # Bypass deterministico: se a tool de checkout devolveu uma mensagem
+        # (qualquer retorno que nao seja uma URL de pagamento), envie-a literal.
+        deterministic = payment_sink.get("deterministic_reply")
+        if deterministic:
+            return deterministic
+        return llm_reply
+
+    def _build_agent(
+        self,
+        agent_name: str,
+        session_id: str,
+        lead_id: str,
+        result_sink: Optional[dict] = None,
+    ):
         """Factory: constroi o agente Agno correto para o nome dado."""
         kwargs: Any = dict(
             tenant_config=self._tenant,
@@ -184,7 +207,7 @@ class ZWAFTeam:
 
         if agent_name == "vendedor":
             from zwaf.agents.vendedor import build_vendedor_agent
-            return build_vendedor_agent(**kwargs)
+            return build_vendedor_agent(payment_result_sink=result_sink, **kwargs)
         if agent_name == "recompra":
             from zwaf.agents.recompra import build_recompra_agent
             return build_recompra_agent(**kwargs)
@@ -202,7 +225,7 @@ class ZWAFTeam:
                 "Redirecionando para vendedor."
             )
             from zwaf.agents.vendedor import build_vendedor_agent
-            return build_vendedor_agent(**kwargs)
+            return build_vendedor_agent(payment_result_sink=result_sink, **kwargs)
 
         logger.warning("Unknown agent name '%s' — defaulting to vendedor", agent_name)
         from zwaf.agents.vendedor import build_vendedor_agent

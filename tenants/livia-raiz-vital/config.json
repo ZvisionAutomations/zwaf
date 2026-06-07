@@ -5,7 +5,7 @@
   "language": "pt-BR",
 
   "llm": {
-    "primary": "gpt-4o-mini",
+    "primary": "gpt-4o",
     "fallback": "gemini-1.5-flash",
     "temperature": 0.7
   },
