@@ -56,7 +56,7 @@ def test_checkout_rejects_invalid_document_checksum():
     )
 
     assert result.ok is False
-    assert "customer_document" in result.missing_fields
+    assert "customer_document_invalid" in result.missing_fields
 
 
 def test_opt_out_phrases_are_detected():

@@ -137,9 +137,6 @@ SCENARIOS = [
 
 async def run_scenario(scenario: Scenario, team=None) -> ScenarioResult:
     """Executa um cenário com mock do ZWAFTeam se não fornecido."""
-    from zwaf.core.team import ZWAFTeam, TeamResponse
-    from zwaf.core.router_agent import RouteResult
-
     start = time.monotonic()
     responses = []
     agent_used = ""

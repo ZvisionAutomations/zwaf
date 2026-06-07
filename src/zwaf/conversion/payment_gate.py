@@ -11,9 +11,23 @@ from zwaf.tools.payment import make_payment_link_generator
 def make_guarded_payment_link_generator(
     tenant_id: str,
     payment_config: Optional[dict[str, Any]] = None,
+    result_sink: Optional[dict[str, Any]] = None,
 ) -> Callable:
-    """Return a payment tool that requires explicit buying-intent evidence."""
+    """Return a payment tool that requires explicit buying-intent evidence.
+
+    result_sink: dict mutavel (por request) onde a tool registra respostas
+    DETERMINISTICAS (qualquer retorno que NAO seja uma URL de pagamento). O
+    coordenador (ZWAFTeam) usa isso para enviar a mensagem literal ao cliente,
+    sem deixar o LLM parafrasear erros de checkout (ex.: "CPF invalido"). Em caso
+    de sucesso (URL http), nada e registrado e o LLM compoe a resposta natural.
+    """
     raw_generator = make_payment_link_generator(tenant_id, payment_config)
+
+    def _record(message: str) -> str:
+        """Registra mensagem deterministica no sink quando NAO for uma URL."""
+        if result_sink is not None and not str(message).startswith("http"):
+            result_sink["deterministic_reply"] = message
+        return message
 
     async def generate_payment_link(
         product_id: str,
@@ -34,12 +48,12 @@ def make_guarded_payment_link_generator(
         )
         if not checkout.ok:
             if checkout.code == "blocked_product":
-                return checkout.message or (
+                return _record(checkout.message or (
                     "Nao vou gerar esse link por aqui. Esse produto e atendido por "
                     "outro consultor da Raiz Vital."
-                )
+                ))
             missing = _format_missing_checkout_fields(checkout.missing_fields)
-            return (
+            return _record(
                 "Antes de te mandar o link, preciso completar o pedido com "
                 f"estes dados: {missing}."
             )
@@ -51,7 +65,7 @@ def make_guarded_payment_link_generator(
         )
 
         if decision.should_send_payment_link:
-            return await raw_generator(
+            return _record(await raw_generator(
                 product_id=product_id,
                 customer_phone=customer_phone,
                 customer_name=customer_name,
@@ -59,19 +73,19 @@ def make_guarded_payment_link_generator(
                 delivery_address=delivery_address,
                 billing_type=billing_type,
                 quantity=quantity,
-            )
+            ))
 
         if decision.action == ConversionAction.TRANSFER_AGENT:
-            return "Nao vou gerar esse link por aqui. Esse produto precisa ser atendido pelo consultor correto."
+            return _record("Nao vou gerar esse link por aqui. Esse produto precisa ser atendido pelo consultor correto.")
 
         if decision.action == ConversionAction.ESCALATE_HUMAN:
-            return "Nao vou enviar link agora. Vou chamar uma pessoa da equipe para te ajudar com seguranca."
+            return _record("Nao vou enviar link agora. Vou chamar uma pessoa da equipe para te ajudar com seguranca.")
 
         if decision.action == ConversionAction.HANDLE_OBJECTION:
-            return "Antes do link, deixa eu te ajudar a avaliar o custo-beneficio e tirar sua duvida."
+            return _record("Antes do link, deixa eu te ajudar a avaliar o custo-beneficio e tirar sua duvida.")
 
         if decision.action in {ConversionAction.ASK_FOLLOWUP, ConversionAction.ANSWER_QUESTION}:
-            return await raw_generator(
+            return _record(await raw_generator(
                 product_id=product_id,
                 customer_phone=customer_phone,
                 customer_name=customer_name,
@@ -79,9 +93,9 @@ def make_guarded_payment_link_generator(
                 delivery_address=delivery_address,
                 billing_type=billing_type,
                 quantity=quantity,
-            )
+            ))
 
-        return "Nao consegui confirmar o fechamento do pedido neste momento."
+        return _record("Nao consegui confirmar o fechamento do pedido neste momento.")
 
     generate_payment_link.__name__ = "generate_payment_link"
     return generate_payment_link
@@ -91,6 +105,7 @@ def _format_missing_checkout_fields(missing_fields: list[str]) -> str:
     labels = {
         "customer_name": "nome completo",
         "customer_document": "CPF/CNPJ valido",
+        "customer_document_invalid": "um CPF valido (o numero informado nao e um CPF valido, confira os digitos)",
         "delivery_address.postal_code": "CEP",
         "delivery_address.street": "rua",
         "delivery_address.number": "numero",

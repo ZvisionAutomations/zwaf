@@ -43,5 +43,6 @@ async def test_escalate_to_human_sends_context_with_available_tool(monkeypatch):
     send_message.assert_awaited_once()
     _, kwargs = send_message.call_args
     assert kwargs["phone"] == "5511000000001"
+    assert kwargs["session_id"] != "escalation_5511000000000"
     assert "pedido com erro" in kwargs["text"]
     assert "lead pediu ajuda" in kwargs["text"]

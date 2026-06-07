@@ -3,7 +3,7 @@ Escalation Tool — escala conversa para humano responsável.
 
 Política SPEC seção 9.2:
 - Lead pede humano → agente tenta resolver 1-2 turnos
-- Lead insiste 2ª vez → escala para Fernando (+55 11 98014-2484)
+- Lead insiste 2ª vez → escala para o responsavel configurado localmente
 - Situações diretas (reembolso, reação adversa, defeito) → escala imediata
 - Após escalar: agente para de responder ativamente
 """
@@ -13,11 +13,13 @@ import logging
 import os
 from typing import Optional
 
+from zwaf.security.pii import hash_pii
+
 logger = logging.getLogger("zwaf.tools.escalation")
 
 # Número de escalação padrão (Raiz Vital)
 # Configurável por tenant no config.json — fallback hardcoded como default
-_ESCALATION_NUMBER = os.getenv("ESCALATION_PHONE", "+5511980142484")
+_ESCALATION_NUMBER = os.getenv("ESCALATION_PHONE", "")
 
 
 async def escalate_to_human(
@@ -58,16 +60,18 @@ async def escalate_to_human(
     try:
         # Import tardio para evitar ciclo — o tool de WA é injetado via contexto
         from zwaf.tools.whatsapp import _tenant_tools
-        if _tenant_tools:
+        if not target_phone:
+            logger.warning("Escalation phone not configured")
+        elif _tenant_tools:
             tool = next(iter(_tenant_tools.values()))
             await tool.send_message(
                 phone=target_phone,
                 text=human_message,
-                session_id=f"escalation_{lead_phone}",
+                session_id=f"escalation_{hash_pii(lead_phone)[:16]}",
             )
             logger.info(
                 "Escalation sent to human",
-                extra={"lead": lead_phone, "escalation_to": target_phone[-4:]},
+                extra={"lead_tail": lead_phone[-4:], "escalation_to": target_phone[-4:]},
             )
         else:
             logger.warning(

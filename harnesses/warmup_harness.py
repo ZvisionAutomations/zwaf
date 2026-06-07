@@ -15,7 +15,7 @@ import asyncio
 import sys
 import time
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 from unittest.mock import patch
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -37,9 +37,6 @@ class DayResult:
 async def simulate_day(day: int, messages_per_minute: int = 10) -> DayResult:
     """Simula envio de mensagens em um dia de warm-up."""
     expected_limit = get_warm_up_limit(day, messages_per_minute)
-
-    # Data de início: tal que hoje seja o 'day'
-    start_date = date.today() - timedelta(days=day - 1)
 
     tool = WhatsAppTool(
         base_url="http://mock",

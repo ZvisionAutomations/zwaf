@@ -15,8 +15,8 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
-from dataclasses import dataclass, field
-from unittest.mock import AsyncMock, MagicMock, patch
+from dataclasses import dataclass
+from unittest.mock import MagicMock, patch
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -53,7 +53,7 @@ async def test_rate_limiter_enforces_limit() -> ThrottleResult:
             tool._reset_daily_count_if_needed()
             tool._daily_sent_count = i  # Simular envios anteriores
             # Enviar sem verificar rate limiter por número (teste do warm-up limit)
-            r = await tool.send_message(phone=f"5511999990001", text=f"msg {i}", session_id=f"s{i}")
+            r = await tool.send_message(phone="5511999990001", text=f"msg {i}", session_id=f"s{i}")
             results.append(r)
 
     # Todos devem passar (rate limiter por minuto usa sliding window — mock não espera)
