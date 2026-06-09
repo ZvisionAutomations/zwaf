@@ -16,10 +16,15 @@ from zwaf.conversion.payment_gate import (
 
 
 _ADDR_OK = {
-    "postal_code": "06754110", "street": "Rua das camelias", "number": "530",
-    "district": "Centro", "city": "Taboao da Serra", "state": "SP",
+    "postal_code": "01001000", "street": "Praca da Se", "number": "530",
+    "district": "Se", "city": "Sao Paulo", "state": "SP",
 }
-_ADDR_NO_DISTRICT = {k: v for k, v in _ADDR_OK.items() if k != "district"}
+# story-040: o gate agora resolve o endereco via ViaCEP a partir do CEP. Para
+# manter este teste deterministico e OFFLINE (sem rede), o endereco usado no
+# caminho async omite postal_code E district: sem CEP o resolver nao chama o
+# ViaCEP, entao o district permanece faltante (assercao "bairro") e o CPF
+# invalido continua sendo reportado (comportamento 035 intacto).
+_ADDR_NO_DISTRICT = {k: v for k, v in _ADDR_OK.items() if k not in ("district", "postal_code")}
 
 
 def test_invalid_cpf_is_distinguished_from_missing():

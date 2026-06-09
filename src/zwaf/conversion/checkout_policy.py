@@ -102,6 +102,22 @@ def validate_checkout_ready(
 
 
 def normalize_delivery_address(delivery_address: Any) -> dict[str, str]:
+    """Normaliza um endereco para dict[str,str] (story-040 FR-1).
+
+    Aceita tanto dict quanto string em texto livre. String NAO retorna mais {}
+    silencioso: o parser deterministico extrai CEP/numero/complemento. Esta funcao
+    e SINCRONA e NAO faz rede (sem ViaCEP) — o enriquecimento via ViaCEP acontece
+    no caminho async (resolve_delivery_address / payment_gate).
+    """
+    if isinstance(delivery_address, str):
+        # Import tardio para evitar ciclo (address_resolver importa pii daqui via
+        # security, mas nao este modulo; ainda assim mantemos lazy por seguranca).
+        from zwaf.conversion.address_resolver import parse_free_text_address
+
+        parsed = parse_free_text_address(delivery_address)
+        if parsed.get("postal_code"):
+            parsed["postal_code"] = only_digits(parsed["postal_code"])
+        return parsed
     if not isinstance(delivery_address, dict):
         return {}
     normalized: dict[str, str] = {}
