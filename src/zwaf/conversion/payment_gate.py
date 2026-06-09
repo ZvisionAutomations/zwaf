@@ -3,15 +3,30 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
+from zwaf.conversion.address_attempts import record_address_failure, reset_attempts
+from zwaf.conversion.address_resolver import resolve_delivery_address
 from zwaf.conversion.checkout_policy import validate_checkout_ready
 from zwaf.conversion.intelligence import ConversionAction, decide_payment_link
 from zwaf.tools.payment import make_payment_link_generator
+
+
+def _is_address_only_failure(missing_fields: list[str]) -> bool:
+    """True quando todos os campos faltantes sao de endereco (story-040 FR-7).
+
+    O contador anti-loop so deve avancar quando a falha e puramente de endereco;
+    CPF/nome faltante seguem o fluxo normal da story-035 sem escalar por endereco.
+    """
+    if not missing_fields:
+        return False
+    return all(field.startswith("delivery_address.") for field in missing_fields)
 
 
 def make_guarded_payment_link_generator(
     tenant_id: str,
     payment_config: Optional[dict[str, Any]] = None,
     result_sink: Optional[dict[str, Any]] = None,
+    session_id: str = "",
+    lead_id: str = "",
 ) -> Callable:
     """Return a payment tool that requires explicit buying-intent evidence.
 
@@ -39,12 +54,17 @@ def make_guarded_payment_link_generator(
         billing_type: str = "",
         quantity: int = 0,
     ) -> str:
+        # Story-040: resolve o endereco (str|dict) via parser + ViaCEP ANTES de
+        # validar. ViaCEP completa street/district/city/state a partir do CEP;
+        # fallback resiliente usa os campos do LLM se o ViaCEP falhar (FR-6/NFR-2).
+        resolved_address = await resolve_delivery_address(delivery_address)
+
         checkout = validate_checkout_ready(
             tenant_id=tenant_id,
             product_id=product_id,
             customer_name=customer_name,
             customer_document=customer_document,
-            delivery_address=delivery_address,
+            delivery_address=resolved_address,
         )
         if not checkout.ok:
             if checkout.code == "blocked_product":
@@ -52,11 +72,20 @@ def make_guarded_payment_link_generator(
                     "Nao vou gerar esse link por aqui. Esse produto e atendido por "
                     "outro consultor da Raiz Vital."
                 ))
+            # Story-040 FR-7: so o caminho de endereco alimenta o anti-loop. CPF/
+            # nome faltante (035) NAO escalam por endereco.
+            if _is_address_only_failure(checkout.missing_fields):
+                attempts = record_address_failure(session_id, lead_id)
+                if result_sink is not None:
+                    result_sink["address_attempts"] = attempts
             missing = _format_missing_checkout_fields(checkout.missing_fields)
             return _record(
                 "Antes de te mandar o link, preciso completar o pedido com "
                 f"estes dados: {missing}."
             )
+
+        # Endereco completo -> zera o contador anti-loop da sessao.
+        reset_attempts(session_id, lead_id)
 
         decision = decide_payment_link(
             product_id=product_id,
@@ -70,7 +99,7 @@ def make_guarded_payment_link_generator(
                 customer_phone=customer_phone,
                 customer_name=customer_name,
                 customer_document=customer_document,
-                delivery_address=delivery_address,
+                delivery_address=resolved_address,
                 billing_type=billing_type,
                 quantity=quantity,
             ))
@@ -90,7 +119,7 @@ def make_guarded_payment_link_generator(
                 customer_phone=customer_phone,
                 customer_name=customer_name,
                 customer_document=customer_document,
-                delivery_address=delivery_address,
+                delivery_address=resolved_address,
                 billing_type=billing_type,
                 quantity=quantity,
             ))

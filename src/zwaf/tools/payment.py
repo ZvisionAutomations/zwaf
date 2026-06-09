@@ -168,12 +168,34 @@ def make_payment_link_generator(
                 )
                 resp.raise_for_status()
                 data = resp.json()
+                payment_id = str(data.get("id", ""))
+
+                # Pix (story-041): devolve o copia-e-cola LITERAL no chat, sem
+                # redirect. Exige a 2a chamada GET /payments/{id}/pixQrCode.
+                if resolved_billing_type == "PIX":
+                    try:
+                        payload = await _fetch_pix_copy_paste(client, asaas, payment_id)
+                    except Exception as exc:  # noqa: BLE001 — fallback resiliente
+                        logger.error("Asaas pixQrCode fetch failed: %s", exc)
+                        payload = ""
+                    if payload:
+                        await mark_order_payment_created(
+                            order_id=order_id,
+                            asaas_customer_id=customer_id,
+                            asaas_payment_id=payment_id,
+                            payment_url=_extract_payment_url(data),
+                        )
+                        return _pix_message(payload, price_cents)
+                    logger.error("Asaas returned no Pix payload for payment %s", payment_id)
+                    await _release_failed_reservation(order_id)
+                    return _MSG_GENERIC_ERROR
+
                 url = _extract_payment_url(data)
                 if url:
                     await mark_order_payment_created(
                         order_id=order_id,
                         asaas_customer_id=customer_id,
-                        asaas_payment_id=str(data.get("id", "")),
+                        asaas_payment_id=payment_id,
                         payment_url=url,
                     )
                     return url
@@ -429,6 +451,43 @@ def _extract_payment_url(data: dict[str, Any]) -> str:
         if value:
             return str(value)
     return ""
+
+
+async def _fetch_pix_copy_paste(
+    client: httpx.AsyncClient,
+    config: dict[str, str],
+    payment_id: str,
+) -> str:
+    """Busca o codigo Pix copia-e-cola da cobranca (Asaas GET /payments/{id}/pixQrCode).
+
+    O POST /payments com billingType=PIX NAO retorna o copia-e-cola no corpo; e
+    preciso esta segunda chamada para obter o campo `payload` (story-041).
+    """
+    if not payment_id:
+        return ""
+    resp = await client.get(
+        f"{config['base_url']}/payments/{payment_id}/pixQrCode",
+        headers=_asaas_headers(config),
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return str(data.get("payload") or "")
+
+
+def _format_brl(price_cents: int) -> str:
+    """123 -> 'R$ 1,23'; 119900 -> 'R$ 1.199,00'."""
+    formatted = f"{price_cents / 100:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"R$ {formatted}"
+
+
+def _pix_message(payload: str, price_cents: int) -> str:
+    """Mensagem com o copia-e-cola para envio LITERAL no chat (story-041 FR-1)."""
+    return (
+        "Prontinho! Pra finalizar, e so copiar o codigo Pix abaixo e colar no app do "
+        f"seu banco ({_format_brl(price_cents)}):\n\n"
+        f"{payload}\n\n"
+        "Assim que o pagamento cair, eu te confirmo por aqui."
+    )
 
 
 def _redact(data: Any) -> Any:

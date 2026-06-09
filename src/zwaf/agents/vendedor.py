@@ -34,6 +34,8 @@ def build_vendedor_agent(
             tenant_config.tenant_id,
             tenant_config.payment,
             result_sink=payment_result_sink,
+            session_id=session_id,
+            lead_id=lead_id,
         ),
     ]
 

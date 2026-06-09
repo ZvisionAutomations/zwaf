@@ -37,6 +37,7 @@ TIERED_PRODUCTS = {
 }
 
 VALID_DOCUMENT = "529" + "982" + "247" + "25"
+PIX_COPY_PASTE = "00020126PIXCOPIAECOLA520400005303986540514.905802BR"
 VALID_ADDRESS = {
     "postal_code": "01001000",
     "street": "Rua Teste",
@@ -83,8 +84,12 @@ class FakeAsyncClient:
     async def __aexit__(self, exc_type, exc, tb):
         return None
 
-    async def get(self, url: str, headers: dict, params: dict):
+    async def get(self, url: str, headers: dict, params: dict | None = None):
         self.calls.append({"method": "GET", "url": url, "headers": headers, "params": params})
+        if url.endswith("/pixQrCode"):
+            return FakeResponse(
+                {"payload": PIX_COPY_PASTE, "encodedImage": "iVBORw0KGgoQR=="}, method="GET"
+            )
         if url.endswith("/customers"):
             data = [self.existing_customer] if self.existing_customer else []
             return FakeResponse({"data": data}, method="GET")
@@ -127,9 +132,10 @@ async def test_generate_payment_link_creates_customer_and_pix_payment(monkeypatc
         billing_type="PIX",
     )
 
-    assert result == "https://asaas.test/i/pay_123"
-    assert len(fake_client.calls) == 3
-    lookup_call, customer_call, payment_call = fake_client.calls
+    assert PIX_COPY_PASTE in result  # copia-e-cola entregue no chat (story-041)
+    assert len(fake_client.calls) == 4  # lookup, create customer, create payment, pixQrCode
+    lookup_call, customer_call, payment_call, pix_call = fake_client.calls
+    assert pix_call["url"].endswith(f"/payments/pay_123/pixQrCode")
     assert lookup_call["method"] == "GET"
     assert lookup_call["url"].endswith("/customers")
     assert lookup_call["params"] == {
@@ -178,8 +184,8 @@ async def test_generate_payment_link_reuses_existing_customer_by_external_refere
         delivery_address=VALID_ADDRESS,
     )
 
-    assert result == "https://asaas.test/i/pay_123"
-    assert [call["method"] for call in fake_client.calls] == ["GET", "POST"]
+    assert PIX_COPY_PASTE in result
+    assert [call["method"] for call in fake_client.calls] == ["GET", "POST", "GET"]
     payment_call = fake_client.calls[1]
     assert payment_call["url"].endswith("/payments")
     assert payment_call["json"]["customer"] == "cus_existing"
@@ -210,8 +216,8 @@ async def test_generate_payment_link_updates_existing_customer_document(monkeypa
         delivery_address=VALID_ADDRESS,
     )
 
-    assert result == "https://asaas.test/i/pay_123"
-    assert [call["method"] for call in fake_client.calls] == ["GET", "PUT", "POST"]
+    assert PIX_COPY_PASTE in result
+    assert [call["method"] for call in fake_client.calls] == ["GET", "PUT", "POST", "GET"]
     update_call = fake_client.calls[1]
     assert update_call["url"].endswith("/customers/cus_existing")
     assert update_call["json"]["cpfCnpj"] == VALID_DOCUMENT
@@ -297,7 +303,7 @@ async def test_generate_payment_link_tiered_quantity_three_pix(monkeypatch):
         quantity=3,
     )
 
-    assert result == "https://asaas.test/i/pay_123"
+    assert PIX_COPY_PASTE in result
     payment_call = fake_client.calls[2]
     assert payment_call["json"]["value"] == 384.0
 
@@ -322,7 +328,7 @@ async def test_generate_payment_link_uses_package_price_without_multiplying_qty(
         delivery_address=VALID_ADDRESS,
     )
 
-    assert result == "https://asaas.test/i/pay_123"
+    assert PIX_COPY_PASTE in result
     payment_call = fake_client.calls[2]
     assert payment_call["json"]["value"] == 335.9
 
@@ -443,7 +449,7 @@ async def test_generate_payment_link_reserves_stock_before_asaas(monkeypatch):
         quantity=3,
     )
 
-    assert result == "https://asaas.test/i/pay_123"
+    assert PIX_COPY_PASTE in result
     # Reserved the base product slug for the requested quantity.
     assert captured["product_id"] == "new-woman"
     assert captured["quantity"] == 3
@@ -476,6 +482,84 @@ async def test_generate_payment_link_blocks_and_skips_asaas_when_unavailable(mon
 
     assert result == payment._MSG_UNAVAILABLE
     assert fake_client.calls == []  # Asaas never contacted
+
+
+@pytest.mark.asyncio
+async def test_generate_payment_link_card_returns_url_no_pixqrcode(monkeypatch):
+    """Cartao mantem o fluxo de URL e NAO chama o endpoint de Pix (story-041)."""
+    fake_client = FakeAsyncClient()
+    monkeypatch.setattr(payment.httpx, "AsyncClient", lambda **kwargs: fake_client)
+    monkeypatch.setenv("ASAAS_API_KEY", "test-asaas-key")
+    monkeypatch.setenv("ASAAS_BASE_URL", "https://api-sandbox.asaas.com/v3")
+
+    generate_payment_link = payment.make_payment_link_generator(
+        "livia-raiz-vital",
+        {"products": PRODUCTS},
+    )
+
+    result = await generate_payment_link(
+        "new-woman-1",
+        "5511999990001",
+        customer_name="Maria Silva",
+        customer_document=VALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+        billing_type="CREDIT_CARD",
+    )
+
+    assert result == "https://asaas.test/i/pay_123"
+    assert not any(call["url"].endswith("/pixQrCode") for call in fake_client.calls)
+
+
+@pytest.mark.asyncio
+async def test_generate_payment_link_pix_without_payload_releases_reservation(monkeypatch):
+    """Se o Asaas nao devolver o copia-e-cola, libera a reserva e nao promete (story-041)."""
+    released: list = []
+
+    async def fake_order_draft(**kwargs):
+        return "order-xyz"
+
+    async def fake_reserve(**kwargs):
+        return ReservationResult(ok=True, status="reserved")
+
+    async def fake_release(**kwargs):
+        released.append(kwargs["order_id"])
+        return True
+
+    async def fake_mark_failed(**kwargs):
+        pass
+
+    monkeypatch.setattr(payment, "create_order_draft", fake_order_draft)
+    monkeypatch.setattr(payment, "reserve_inventory", fake_reserve)
+    monkeypatch.setattr(payment, "release_reservation", fake_release)
+    monkeypatch.setattr(payment, "mark_order_payment_failed", fake_mark_failed)
+
+    class NoPayloadClient(FakeAsyncClient):
+        async def get(self, url: str, headers: dict, params: dict | None = None):
+            self.calls.append({"method": "GET", "url": url})
+            if url.endswith("/pixQrCode"):
+                return FakeResponse({"payload": ""}, method="GET")
+            return FakeResponse({"data": []}, method="GET")
+
+    fake_client = NoPayloadClient()
+    monkeypatch.setattr(payment.httpx, "AsyncClient", lambda **kwargs: fake_client)
+    monkeypatch.setenv("ASAAS_API_KEY", "test-asaas-key")
+    monkeypatch.setenv("ASAAS_BASE_URL", "https://api-sandbox.asaas.com/v3")
+
+    generate_payment_link = payment.make_payment_link_generator(
+        "livia-raiz-vital",
+        {"products": PRODUCTS},
+    )
+
+    result = await generate_payment_link(
+        "new-woman-1",
+        "5511999990001",
+        customer_name="Maria Silva",
+        customer_document=VALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+    )
+
+    assert result == payment._MSG_GENERIC_ERROR
+    assert released == ["order-xyz"]
 
 
 @pytest.mark.asyncio
