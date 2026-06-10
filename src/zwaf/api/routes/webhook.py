@@ -197,6 +197,18 @@ async def _process_and_respond(team, message, phone, session_id, lead_id, tenant
             status="ok",
         )
         await team.send_response(phone=phone, text=response.response, session_id=session_id)
+
+        # Story-044: summarizer pos-resposta (fora do caminho quente, best-effort,
+        # throttled). Pula guard/opt_out — nao resumir quem foi bloqueado ou pediu
+        # para sair. A flag e o throttle sao decididos dentro de update_lead_memory.
+        if response.agent_used not in ("guard", "opt_out"):
+            asyncio.create_task(
+                team.update_lead_memory(
+                    phone=phone,
+                    session_id=session_id,
+                    agent_name=response.agent_used,
+                )
+            )
     except Exception as e:
         logger.error(
             "Failed to process webhook message",

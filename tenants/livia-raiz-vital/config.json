@@ -7,7 +7,7 @@
   "llm": {
     "primary": "gpt-4o",
     "fallback": "gemini-1.5-flash",
-    "temperature": 0.7
+    "temperature": 0.4
   },
 
   "whatsapp": {
@@ -40,6 +40,8 @@
     "completion_url": "${ASAAS_COMPLETION_URL}",
     "default_customer_cpf_cnpj": "${ASAAS_DEFAULT_CUSTOMER_CPF_CNPJ}",
     "billing_type": "PIX",
+    "_card_callback_note": "Ligar card_callback_enabled SO depois de cadastrar um dominio/site em Minha Conta > Informacoes no Asaas. Sem dominio, o callback.successUrl causa HTTP 400 e quebra o cartao.",
+    "card_callback_enabled": false,
     "products": {
       "new-woman": {
         "product_id": "nw-001",
@@ -91,5 +93,14 @@
   "lgpd": {
     "consent_required": true,
     "data_retention_days": 730
+  },
+
+  "lead_memory": {
+    "enabled": false,
+    "throttle_turns": 6,
+    "summarize_last_n_runs": 12,
+    "summarizer_model": "gemini-1.5-flash",
+    "reinject_max_chars": 1000,
+    "_note": "story-044. enabled=false ate F1-F5 prontas e validadas; ligar so apos QA. Retencao herda lgpd.data_retention_days (730d = 24m)."
   }
 }

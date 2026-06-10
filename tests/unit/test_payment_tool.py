@@ -485,12 +485,14 @@ async def test_generate_payment_link_blocks_and_skips_asaas_when_unavailable(mon
 
 
 @pytest.mark.asyncio
-async def test_generate_payment_link_card_returns_url_no_pixqrcode(monkeypatch):
-    """Cartao mantem o fluxo de URL e NAO chama o endpoint de Pix (story-041)."""
+async def test_generate_payment_link_card_returns_link_message_no_pixqrcode(monkeypatch):
+    """Cartao entrega uma mensagem amigavel com o link e NAO chama o Pix (story-042)."""
     fake_client = FakeAsyncClient()
     monkeypatch.setattr(payment.httpx, "AsyncClient", lambda **kwargs: fake_client)
     monkeypatch.setenv("ASAAS_API_KEY", "test-asaas-key")
     monkeypatch.setenv("ASAAS_BASE_URL", "https://api-sandbox.asaas.com/v3")
+    monkeypatch.delenv("ASAAS_RETURN_URL", raising=False)
+    monkeypatch.delenv("ASAAS_COMPLETION_URL", raising=False)
 
     generate_payment_link = payment.make_payment_link_generator(
         "livia-raiz-vital",
@@ -506,8 +508,96 @@ async def test_generate_payment_link_card_returns_url_no_pixqrcode(monkeypatch):
         billing_type="CREDIT_CARD",
     )
 
-    assert result == "https://asaas.test/i/pay_123"
+    # A URL vai dentro da mensagem (story-042 FR-1), nao mais crua.
+    assert "https://asaas.test/i/pay_123" in result
+    assert "cartao" in result.lower()
+    assert "parcel" in result.lower()
     assert not any(call["url"].endswith("/pixQrCode") for call in fake_client.calls)
+
+
+@pytest.mark.asyncio
+async def test_generate_payment_link_card_adds_callback_with_opaque_lead_token(monkeypatch):
+    """Story-042 AC-6: com callback HABILITADO, successUrl leva token opaco, sem PII."""
+    fake_client = FakeAsyncClient()
+    monkeypatch.setattr(payment.httpx, "AsyncClient", lambda **kwargs: fake_client)
+    monkeypatch.setenv("ASAAS_API_KEY", "test-asaas-key")
+    monkeypatch.setenv("ASAAS_BASE_URL", "https://api-sandbox.asaas.com/v3")
+    monkeypatch.setenv("ASAAS_RETURN_URL", "https://raizvitaloficial.com.br/obrigada")
+
+    generate_payment_link = payment.make_payment_link_generator(
+        "livia-raiz-vital",
+        {"products": PRODUCTS, "card_callback_enabled": True},
+    )
+
+    await generate_payment_link(
+        "new-woman-1",
+        "5511999990001",
+        customer_name="Maria Silva",
+        customer_document=VALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+        billing_type="CREDIT_CARD",
+    )
+
+    payment_call = next(
+        c for c in fake_client.calls if c["method"] == "POST" and c["url"].endswith("/payments")
+    )
+    callback = payment_call["json"]["callback"]
+    success_url = callback["successUrl"]
+    assert success_url.startswith("https://raizvitaloficial.com.br/obrigada?lead=")
+    assert callback["autoRedirect"] is True
+    # Sem PII na URL (AC-6).
+    assert VALID_DOCUMENT not in success_url
+    assert "5511999990001" not in success_url
+    assert "Maria" not in success_url
+
+
+@pytest.mark.asyncio
+async def test_card_no_callback_by_default_even_with_return_url(monkeypatch):
+    """Regressao do bug de PROD: sem card_callback_enabled, NAO manda callback.
+
+    O Asaas rejeita callback.successUrl (400 'dominio nao configurado') se a conta
+    nao tem dominio. O default tem que ser SEM callback -> cartao funciona.
+    """
+    fake_client = FakeAsyncClient()
+    monkeypatch.setattr(payment.httpx, "AsyncClient", lambda **kwargs: fake_client)
+    monkeypatch.setenv("ASAAS_API_KEY", "test-asaas-key")
+    monkeypatch.setenv("ASAAS_BASE_URL", "https://api-sandbox.asaas.com/v3")
+    monkeypatch.setenv("ASAAS_RETURN_URL", "https://raizvitaloficial.com.br/obrigada")
+
+    generate_payment_link = payment.make_payment_link_generator(
+        "livia-raiz-vital",
+        {"products": PRODUCTS},  # sem card_callback_enabled
+    )
+
+    result = await generate_payment_link(
+        "new-woman-1",
+        "5511999990001",
+        customer_name="Maria Silva",
+        customer_document=VALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+        billing_type="CREDIT_CARD",
+    )
+
+    assert "https://asaas.test/i/pay_123" in result  # cartao gerou normalmente
+    payment_call = next(
+        c for c in fake_client.calls if c["method"] == "POST" and c["url"].endswith("/payments")
+    )
+    assert "callback" not in payment_call["json"]  # sem callback -> sem 400
+
+
+def test_card_callback_skipped_without_flag(monkeypatch):
+    """Sem a flag card_callback_enabled, nenhum callback (mesmo com return_url)."""
+    monkeypatch.setenv("ASAAS_RETURN_URL", "https://raizvitaloficial.com.br/obrigada")
+    assert payment._build_card_callback({}) is None
+    assert payment._build_card_callback({"card_callback_enabled": False}) is None
+
+
+def test_card_message_embeds_value_with_markup():
+    """A mensagem de cartao exibe o valor a vista (com markup) e fala em parcelar."""
+    msg = payment._card_message("https://asaas.test/i/pay_123", 16390)
+    assert "https://asaas.test/i/pay_123" in msg
+    assert "163,90" in msg
+    assert "parcel" in msg.lower()
 
 
 @pytest.mark.asyncio

@@ -60,17 +60,25 @@ _FIELD_LABELS_PT = {
 # rotulado = maxima precisao de parsing sem tela.
 
 
-def build_transition_message(quantity: int = 1) -> str:
+def build_transition_message(quantity: int = 1, billing_type: str = "PIX") -> str:
     """Mensagem de transicao para o modo checkout, confirmando a quantidade.
 
     Story-041 HIGH-2: confirmar a quantidade aqui da ao cliente a chance de
-    corrigir antes do Pix e deixa explicito o valor que sera cobrado, fechando a
-    janela em que a quantidade poderia cair para 1 silenciosamente.
+    corrigir antes do pagamento e deixa explicito o valor que sera cobrado,
+    fechando a janela em que a quantidade poderia cair para 1 silenciosamente.
+
+    Story-042: a mesma coleta serve para Pix e cartao; so muda a palavra do meio
+    ("Pix" vs "link de pagamento no cartao") para alinhar a expectativa.
     """
     qty = max(1, int(quantity or 1))
     unit = "pote" if qty == 1 else "potes"
+    meio = (
+        "link de pagamento no cartao"
+        if (billing_type or "PIX").upper() == "CREDIT_CARD"
+        else "Pix"
+    )
     return (
-        f"Perfeito! Vou gerar seu Pix de {qty} {unit}. Pra sair certinho e sem "
+        f"Perfeito! Vou gerar seu {meio} de {qty} {unit}. Pra sair certinho e sem "
         "erro, me manda assim (pode copiar e preencher):\n\n"
         "Nome: \n"
         "CPF: \n"
@@ -144,6 +152,44 @@ def _document_from_free_text(text: str) -> str:
     return ""
 
 
+# Linha que parece nome proprio: 2+ palavras so de letras/acentos (sem digitos).
+_NAME_LINE_RE = re.compile(r"^[A-Za-zÀ-ÿ]{2,}(?:\s+[A-Za-zÀ-ÿ.]{1,})+$")
+
+# Palavras que indicam que a linha NAO e um nome (comandos, rotulos, logradouros).
+# Evita capturar "quero pagar agora" ou "rua das flores" como nome do cliente.
+_NAME_STOPWORDS = frozenset({
+    "quero", "pagar", "manda", "mandar", "envia", "enviar", "link", "pix", "cartao",
+    "cartão", "credito", "crédito", "parcelar", "parcelado", "sim", "nao", "não",
+    "ola", "olá", "oi", "obrigado", "obrigada", "fechar", "pedido", "comprar",
+    "compra", "potes", "pote", "quanto", "custa", "valor", "preco", "preço",
+    "rua", "avenida", "av", "alameda", "travessa", "rodovia", "estrada", "praca",
+    "praça", "bairro", "cidade", "numero", "número", "complemento", "compl",
+    "cep", "nome", "cpf", "cnpj", "uf", "estado", "endereco", "endereço",
+})
+
+
+def _name_from_free_text(text: str) -> str:
+    """Extrai um nome completo de texto livre (sem rotulo).
+
+    Caso real (Miguel): o cliente copia os valores do formulario mas NAO os
+    rotulos ("Miguel Augusto Oliveira" numa linha solta). Sem isso o nome nunca
+    e capturado e o checkout entra em loop de "faltou nome completo".
+
+    Heuristica conservadora: uma linha so de letras com 2+ palavras e sem
+    nenhuma stopword (comando/rotulo/logradouro). Retorna a primeira que casar.
+    """
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not _NAME_LINE_RE.match(line):
+            continue
+        words = line.lower().split()
+        if any(w in _NAME_STOPWORDS for w in words):
+            continue
+        if len([w for w in line.split() if len(w) >= 2]) >= 2:
+            return line
+    return ""
+
+
 def parse_message(text: str) -> dict[str, str]:
     """Extrai campos de uma mensagem.
 
@@ -159,9 +205,13 @@ def parse_message(text: str) -> dict[str, str]:
             doc = _document_from_free_text(text)
             if doc:
                 labeled["document"] = doc
+        if not labeled.get("name"):
+            name = _name_from_free_text(text)
+            if name:
+                labeled["name"] = name
         return labeled
 
-    # Sem rotulos: parser de texto livre completo (story-040) + CPF.
+    # Sem rotulos: parser de texto livre completo (story-040) + CPF + nome.
     parsed: dict[str, str] = {}
     free = parse_free_text_address(text)
     for key in ("postal_code", "number", "complement"):
@@ -170,6 +220,9 @@ def parse_message(text: str) -> dict[str, str]:
     doc = _document_from_free_text(text)
     if doc:
         parsed["document"] = doc
+    name = _name_from_free_text(text)
+    if name:
+        parsed["name"] = name
     return parsed
 
 

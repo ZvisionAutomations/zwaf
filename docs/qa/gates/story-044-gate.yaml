@@ -1,0 +1,83 @@
+storyId: STORY-044
+title: "Memória de Lead da Lívia (vendedor com memória)"
+reviewer: "@quality-gate (Litmus)"
+date: "2026-06-10"
+verdict: PASS
+summary: >
+  Implementação F1-F6 completa, flag lead_memory.enabled=OFF (risco de produção zero).
+  Todos os AC de código verificados e testados; segurança/LGPD sólidas; 329 unit tests
+  passando, zero regressões. CONCERNS são gates operacionais de smoke que condicionam
+  ligar a flag, não o merge.
+
+suite:
+  unit_tests: 329
+  new_tests: 27
+  regressions: 0
+  coderabbit: "não executado (CLI em WSL, repo em G:/Google Drive — degradação graciosa)"
+
+acceptance_criteria:
+  - id: AC-1
+    result: PASS
+  - id: AC-2
+    result: PASS
+  - id: AC-3
+    result: PASS
+  - id: AC-4
+    result: PASS
+  - id: AC-5
+    result: PASS
+  - id: AC-6
+    result: PASS
+  - id: AC-7
+    result: PASS
+  - id: AC-8
+    result: PASS
+    note: LOW-2 (sem teste dedicado de wiring multi-agente)
+  - id: AC-9
+    result: CONCERNS
+    note: verificar PENDING do Pix copia-e-cola no smoke
+  - id: AC-10
+    result: PASS
+    note: LOW-1 (caminho real Agno coberto por spike, não por teste unitário)
+  - id: AC-11
+    result: PASS
+  - id: AC-12
+    result: PASS
+
+issues:
+  - severity: medium
+    category: requirements
+    id: CONCERNS-1
+    description: >
+      Recuperação de Pix em aberto depende de o Pix copia-e-cola registrar PENDING em
+      payment_events. payment_webhook mapeia PAYMENT_CREATED->PENDING, mas não está
+      confirmado que a geração do Pix dispara esse evento com lead_phone.
+    recommendation: >
+      Confirmar no smoke pós-deploy. Se não gravar, emitir o evento PENDING na geração
+      do Pix (já previsto no escopo da story). Gate operacional — não bloqueia merge.
+  - severity: low
+    category: tests
+    id: LOW-1
+    description: _read_chat_history (caminho real Agno) não tem teste unitário (precisa sessão viva).
+    recommendation: Smoke com sessão real ao ligar a flag; API já validada por spike.
+  - severity: low
+    category: tests
+    id: LOW-2
+    description: Sem teste de wiring de reinjeção em recompra/suporte/cobrança (builders idênticos ao vendedor testado).
+    recommendation: Fast-follow opcional — teste de wiring multi-agente.
+  - severity: low
+    category: docs
+    id: LOW-3
+    description: Prompts de recompra/suporte/cobrança sem a seção de postura (o bloco injetado já carrega micro-instruções).
+    recommendation: Fast-follow — replicar a seção "Memoria de lead" nos demais prompts.
+
+security:
+  sql_injection: PASS (queries parametrizadas)
+  secrets: PASS (Fernet/summarizer via env)
+  health_data: PASS (cifrado em repouso, purga opt-out, retenção 24m, fora de logs)
+
+deploy_sequence:
+  - "Aplicar migration 006 à mão (migrations não rodam no boot) — antes do código"
+  - "Deploy do código com lead_memory.enabled=false"
+  - "Smoke: sessão real volta → bloco montado; AC-9 (Pix PENDING) e AC-10 (get_chat_history)"
+  - "Ligar a flag (enabled=true) e observar reativação/recuperação"

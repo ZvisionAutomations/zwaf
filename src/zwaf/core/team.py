@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -16,8 +17,16 @@ from zwaf.conversion.checkout_policy import is_opt_out_message
 from zwaf.conversion.intelligence import ConversionAction, LeadSignal, analyze_message
 from zwaf.core.router_agent import RouterAgent, RouteResult
 from zwaf.core.tenant import TenantConfig
+from zwaf.memory.lead_memory import build_memory_block, maybe_update_lead_memory
 from zwaf.memory.lead_store import append_conversion_event, mark_opt_out
-from zwaf.memory.session import get_session_state, set_session_state
+from zwaf.memory.session import (
+    acquire_session_lock,
+    get_session_state,
+    release_session_lock,
+    set_session_state,
+)
+from zwaf.security.pii import can_encrypt_pii, decrypt_pii, encrypt_pii
+from zwaf.tools.payment import MESSAGE_SPLIT
 from zwaf.tools.whatsapp import WhatsAppTool
 
 logger = logging.getLogger("zwaf.core.team")
@@ -26,8 +35,31 @@ logger = logging.getLogger("zwaf.core.team")
 # voltar ao atendimento normal (rede de seguranca contra cliente preso na coleta).
 MAX_CHECKOUT_ATTEMPTS = 4
 
+# Story-044: agentes cuja conversa alimenta o summarizer de memória de lead.
+_SUMMARIZABLE_AGENTS = {"vendedor", "recompra", "suporte", "cobranca"}
+
+CHECKOUT_PAYMENT_LOCK_NAME = "checkout_pix"  # nome do lock mantido por compat. Redis
+CHECKOUT_PAYMENT_LOCK_TTL_SECONDS = 20
+CHECKOUT_FIELDS_ENCRYPTED_FLAG = "_pii_encrypted"
+CHECKOUT_SENSITIVE_FIELDS = {
+    "name",
+    "document",
+    "postal_code",
+    "number",
+    "complement",
+    "street",
+    "district",
+    "city",
+    "state",
+}
+
 # Quantidade de potes/unidades extraida da mensagem-gatilho ("quero 3 potes").
 _QUANTITY_RE = re.compile(r"(\d+)\s*(?:potes?|unidades?|frascos?|caixas?|pote)", re.IGNORECASE)
+
+# Story-042: deteccao deterministica do meio de pagamento na mensagem do cliente.
+# Cartao/parcelar -> CREDIT_CARD; pix -> PIX. Default e PIX (maior conversao).
+_CARD_RE = re.compile(r"\b(cart[aã]o|cr[eé]dito|parcel)", re.IGNORECASE)
+_PIX_RE = re.compile(r"\bpix\b", re.IGNORECASE)
 
 
 @dataclass
@@ -39,6 +71,59 @@ class TeamResponse:
     latency_ms: float
     route_result: RouteResult
     conversion_signal: Optional[LeadSignal] = None
+
+
+def _decrypt_checkout_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Return a session state copy with checkout fields decrypted when needed."""
+    result = deepcopy(state or {})
+    checkout = result.get("checkout")
+    if not isinstance(checkout, dict):
+        return result
+    fields = checkout.get("fields")
+    if not isinstance(fields, dict) or not fields.get(CHECKOUT_FIELDS_ENCRYPTED_FLAG):
+        return result
+
+    decrypted: dict[str, Any] = {}
+    for key, value in fields.items():
+        if key == CHECKOUT_FIELDS_ENCRYPTED_FLAG:
+            continue
+        if key in CHECKOUT_SENSITIVE_FIELDS and isinstance(value, str) and can_encrypt_pii():
+            decrypted[key] = decrypt_pii(value)
+        else:
+            decrypted[key] = value
+    checkout["fields"] = decrypted
+    return result
+
+
+def _encrypt_checkout_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Return a session state copy with checkout PII encrypted for Redis."""
+    result = deepcopy(state or {})
+    if not can_encrypt_pii():
+        return result
+    checkout = result.get("checkout")
+    if not isinstance(checkout, dict):
+        return result
+    fields = checkout.get("fields")
+    if not isinstance(fields, dict) or fields.get(CHECKOUT_FIELDS_ENCRYPTED_FLAG):
+        return result
+
+    encrypted: dict[str, Any] = {}
+    for key, value in fields.items():
+        if key in CHECKOUT_SENSITIVE_FIELDS and isinstance(value, str) and value:
+            encrypted[key] = encrypt_pii(value)
+        else:
+            encrypted[key] = value
+    encrypted[CHECKOUT_FIELDS_ENCRYPTED_FLAG] = True
+    checkout["fields"] = encrypted
+    return result
+
+
+async def _save_session_state(
+    session_id: str,
+    tenant_id: str,
+    state: dict[str, Any],
+) -> None:
+    await set_session_state(session_id, tenant_id, _encrypt_checkout_state(state))
 
 
 class ZWAFTeam:
@@ -59,6 +144,8 @@ class ZWAFTeam:
         router: RouterAgent,
         db_url: str = "",
         fidelizacao_scheduler=None,
+        inventory_sweep_scheduler=None,
+        lead_memory_retention_scheduler=None,
     ):
         self._tenant = tenant_config
         self._whatsapp = whatsapp_tool
@@ -67,10 +154,21 @@ class ZWAFTeam:
         self._guard = _build_guard()
         # Referencia ao scheduler para shutdown no lifespan
         self._fidelizacao_scheduler = fidelizacao_scheduler
+        self._inventory_sweep_scheduler = inventory_sweep_scheduler
+        self._lead_memory_retention_scheduler = lead_memory_retention_scheduler
 
     async def send_response(self, phone: str, text: str, session_id: str) -> None:
-        """Envia resposta via WhatsApp — interface publica para o webhook."""
-        await self._whatsapp.send_message(phone=phone, text=text, session_id=session_id)
+        """Envia resposta via WhatsApp — interface publica para o webhook.
+
+        Se a resposta contiver MESSAGE_SPLIT, ela e quebrada em varias mensagens
+        (ex.: Pix = anuncio + codigo puro), enviadas em sequencia. Cada parte
+        passa pela simulacao de digitacao/rate-limit do WhatsAppTool.
+        """
+        parts = text.split(MESSAGE_SPLIT) if (text and MESSAGE_SPLIT in text) else [text]
+        for part in parts:
+            chunk = part.strip()
+            if chunk:
+                await self._whatsapp.send_message(phone=phone, text=chunk, session_id=session_id)
 
     async def process(
         self,
@@ -173,13 +271,15 @@ class ZWAFTeam:
             signal=conversion_signal.to_dict(),
         )
 
-        # 3. Execute agent
+        # 3. Execute agent — monta a memoria do lead (story-044), so com a flag ON.
+        lead_memory_block = await self._build_lead_memory_block(session_id, phone)
         response_text = await self._run_agent(
             agent_name=route.agent_name,
             message=guard_result.sanitized_input,
             session_id=session_id,
             lead_id=lead_id,
             phone=phone,
+            lead_memory_block=lead_memory_block,
         )
 
         return TeamResponse(
@@ -192,6 +292,46 @@ class ZWAFTeam:
             conversion_signal=conversion_signal,
         )
 
+    async def _build_lead_memory_block(self, session_id: str, phone: str) -> str:
+        """Monta o bloco de memoria do lead (story-044).
+
+        Retorna '' quando a feature flag esta desligada (comportamento atual,
+        regressao zero) ou quando o lead nao tem relacao previa. Nunca propaga
+        excecao — falha de memoria nao pode travar a venda.
+        """
+        cfg = getattr(self._tenant, "lead_memory", None) or {}
+        if not cfg.get("enabled"):
+            return ""
+        try:
+            state = await get_session_state(session_id, self._tenant.tenant_id)
+            max_chars = int(cfg.get("reinject_max_chars", 1000) or 1000)
+            return await build_memory_block(
+                phone,
+                self._tenant.tenant_id,
+                session_state=state,
+                max_chars=max_chars,
+            )
+        except Exception as e:
+            logger.warning("lead memory block build failed: %s", e)
+            return ""
+
+    async def update_lead_memory(self, *, phone: str, session_id: str, agent_name: str) -> bool:
+        """Dispara o summarizer pós-resposta (story-044, F3).
+
+        Chamado pelo webhook via asyncio.create_task APÓS o envio da resposta —
+        fora do caminho quente. Best-effort: a flag e o throttle são decididos
+        dentro de maybe_update_lead_memory; nunca propaga exceção.
+        """
+        name = agent_name if agent_name in _SUMMARIZABLE_AGENTS else "vendedor"
+        return await maybe_update_lead_memory(
+            phone=phone,
+            tenant_id=self._tenant.tenant_id,
+            session_id=session_id,
+            agent_name=name,
+            tenant_config=self._tenant,
+            db_url=self._db_url,
+        )
+
     async def _run_agent(
         self,
         agent_name: str,
@@ -199,6 +339,7 @@ class ZWAFTeam:
         session_id: str,
         lead_id: str,
         phone: str = "",
+        lead_memory_block: str = "",
     ) -> str:
         """Constroi e executa o agente especializado com fallback."""
         # Sink por-request: a tool de pagamento registra aqui mensagens
@@ -206,7 +347,13 @@ class ZWAFTeam:
         # presente, ela e enviada LITERALMENTE ao cliente, sem parafrase do LLM —
         # garante consistencia mesmo com modelos que tendem a reescrever erros.
         payment_sink: dict[str, Any] = {}
-        agent = self._build_agent(agent_name, session_id, lead_id, result_sink=payment_sink)
+        agent = self._build_agent(
+            agent_name,
+            session_id,
+            lead_id,
+            result_sink=payment_sink,
+            lead_memory_block=lead_memory_block,
+        )
         try:
             run_response = await agent.arun(message)
             llm_reply = run_response.content or ""
@@ -300,6 +447,7 @@ class ZWAFTeam:
         session_id: str,
         lead_id: str,
         result_sink: Optional[dict] = None,
+        lead_memory_block: str = "",
     ):
         """Factory: constroi o agente Agno correto para o nome dado."""
         kwargs: Any = dict(
@@ -312,16 +460,20 @@ class ZWAFTeam:
 
         if agent_name == "vendedor":
             from zwaf.agents.vendedor import build_vendedor_agent
-            return build_vendedor_agent(payment_result_sink=result_sink, **kwargs)
+            return build_vendedor_agent(
+                payment_result_sink=result_sink,
+                lead_memory_block=lead_memory_block,
+                **kwargs,
+            )
         if agent_name == "recompra":
             from zwaf.agents.recompra import build_recompra_agent
-            return build_recompra_agent(**kwargs)
+            return build_recompra_agent(lead_memory_block=lead_memory_block, **kwargs)
         if agent_name == "suporte":
             from zwaf.agents.suporte import build_suporte_agent
-            return build_suporte_agent(**kwargs)
+            return build_suporte_agent(lead_memory_block=lead_memory_block, **kwargs)
         if agent_name == "cobranca":
             from zwaf.agents.cobranca import build_cobranca_agent
-            return build_cobranca_agent(**kwargs)
+            return build_cobranca_agent(lead_memory_block=lead_memory_block, **kwargs)
 
         if agent_name == "fidelizacao":
             logger.warning(
@@ -330,11 +482,15 @@ class ZWAFTeam:
                 "Redirecionando para vendedor."
             )
             from zwaf.agents.vendedor import build_vendedor_agent
-            return build_vendedor_agent(payment_result_sink=result_sink, **kwargs)
+            return build_vendedor_agent(
+                payment_result_sink=result_sink,
+                lead_memory_block=lead_memory_block,
+                **kwargs,
+            )
 
         logger.warning("Unknown agent name '%s' — defaulting to vendedor", agent_name)
         from zwaf.agents.vendedor import build_vendedor_agent
-        return build_vendedor_agent(**kwargs)
+        return build_vendedor_agent(lead_memory_block=lead_memory_block, **kwargs)
 
     # ─── Checkout deterministico (story-041) ──────────────
 
@@ -352,7 +508,9 @@ class ZWAFTeam:
         Retorna a mensagem a enviar (literal) quando o fluxo de checkout esta no
         controle, ou None para deixar o atendimento normal (LLM) seguir.
         """
-        state = await get_session_state(session_id, self._tenant.tenant_id)
+        state = _decrypt_checkout_state(
+            await get_session_state(session_id, self._tenant.tenant_id)
+        )
         checkout = dict(state.get("checkout") or {})
 
         if checkout.get("active"):
@@ -366,7 +524,7 @@ class ZWAFTeam:
             if signal.action == ConversionAction.ESCALATE_HUMAN:
                 checkout["active"] = False
                 state["checkout"] = checkout
-                await set_session_state(session_id, self._tenant.tenant_id, state)
+                await _save_session_state(session_id, self._tenant.tenant_id, state)
                 return await self._escalate_from_checkout(
                     phone=phone,
                     message=message,
@@ -390,23 +548,34 @@ class ZWAFTeam:
         if mentioned_qty is not None and not signal.should_send_payment_link:
             if state.get("last_quantity") != mentioned_qty:
                 state["last_quantity"] = mentioned_qty
-                await set_session_state(session_id, self._tenant.tenant_id, state)
+                await _save_session_state(session_id, self._tenant.tenant_id, state)
+
+        # Story-042: lembrar o ultimo meio de pagamento mencionado, igual a qty.
+        # O cliente diz "quero pagar no cartao" e so depois "pode fechar".
+        mentioned_billing = _detect_billing_type(message)
+        if mentioned_billing is not None and not signal.should_send_payment_link:
+            if state.get("last_billing_type") != mentioned_billing:
+                state["last_billing_type"] = mentioned_billing
+                await _save_session_state(session_id, self._tenant.tenant_id, state)
 
         # Nao ativo: inicia a coleta apenas quando ha intencao de compra explicita
         # (mesma regra deterministica que hoje libera o link).
         if signal.should_send_payment_link:
             quantity = mentioned_qty or int(state.get("last_quantity", 1) or 1)
+            billing_type = (
+                mentioned_billing or state.get("last_billing_type") or "PIX"
+            )
             checkout = {
                 "active": True,
                 "product_id": self._default_product_id(signal.product_hint),
-                "billing_type": "PIX",
+                "billing_type": billing_type,
                 "quantity": quantity,
                 "fields": {},
                 "attempts": 0,
             }
             state["checkout"] = checkout
-            await set_session_state(session_id, self._tenant.tenant_id, state)
-            return build_transition_message(quantity)
+            await _save_session_state(session_id, self._tenant.tenant_id, state)
+            return build_transition_message(quantity, billing_type)
 
         return None
 
@@ -471,15 +640,46 @@ class ZWAFTeam:
         state: dict,
         checkout: dict,
     ) -> str:
-        """Processa um turno de coleta: avanca o fluxo, gera o Pix ou pede o que falta."""
+        """Processa um turno de coleta: avanca o fluxo, gera o pagamento ou pede o que falta."""
+        # Story-042: se o cliente trocar de meio durante a coleta ("na verdade no
+        # cartao"), respeita a ultima escolha — os dados coletados continuam validos.
+        switched_billing = _detect_billing_type(message)
+        if switched_billing is not None:
+            checkout["billing_type"] = switched_billing
+
+        # Bug-fix: se o cliente corrigir a quantidade durante a coleta ("mas quero
+        # 2 potes"), atualiza — antes a mudanca era ignorada e cobrava a qty antiga.
+        switched_qty = _quantity_in_message(message)
+        if switched_qty is not None:
+            checkout["quantity"] = switched_qty
+
         turn = await advance_checkout(message, checkout.get("fields", {}))
         checkout["fields"] = turn.collected
 
         if turn.ready:
-            reply = await self._generate_pix_for_checkout(
+            billing_type = checkout.get("billing_type", "PIX")
+            lock_acquired = await acquire_session_lock(
+                tenant_id=self._tenant.tenant_id,
+                session_id=session_id,
+                lock_name=CHECKOUT_PAYMENT_LOCK_NAME,
+                ttl_seconds=CHECKOUT_PAYMENT_LOCK_TTL_SECONDS,
+            )
+            if not lock_acquired:
+                state["checkout"] = checkout
+                await _save_session_state(session_id, self._tenant.tenant_id, state)
+                logger.info(
+                    "Checkout payment generation already in progress",
+                    extra={"session_id": session_id, "tenant_id": self._tenant.tenant_id},
+                )
+                meio = "link de pagamento" if billing_type == "CREDIT_CARD" else "Pix"
+                return (
+                    f"Seu {meio} ja esta sendo gerado. Se ele nao aparecer em alguns "
+                    "segundos, me chama aqui que eu confiro para voce."
+                )
+            reply = await self._generate_payment_for_checkout(
                 phone=phone,
                 product_id=checkout.get("product_id", ""),
-                billing_type=checkout.get("billing_type", "PIX"),
+                billing_type=billing_type,
                 quantity=int(checkout.get("quantity", 1) or 1),
                 collected=turn.collected,
                 resolved_address=turn.resolved_address,
@@ -487,7 +687,12 @@ class ZWAFTeam:
             # Encerra o modo checkout — gerado ou nao, a coleta acabou.
             checkout["active"] = False
             state["checkout"] = checkout
-            await set_session_state(session_id, self._tenant.tenant_id, state)
+            await _save_session_state(session_id, self._tenant.tenant_id, state)
+            await release_session_lock(
+                tenant_id=self._tenant.tenant_id,
+                session_id=session_id,
+                lock_name=CHECKOUT_PAYMENT_LOCK_NAME,
+            )
             return reply
 
         # Ainda coletando: incrementa tentativas e aplica a rede de seguranca para
@@ -496,7 +701,7 @@ class ZWAFTeam:
         if checkout["attempts"] >= MAX_CHECKOUT_ATTEMPTS:
             checkout["active"] = False
             state["checkout"] = checkout
-            await set_session_state(session_id, self._tenant.tenant_id, state)
+            await _save_session_state(session_id, self._tenant.tenant_id, state)
             logger.info(
                 "Checkout collection gave up after %d attempts — back to normal flow",
                 checkout["attempts"],
@@ -507,10 +712,10 @@ class ZWAFTeam:
                 "faltam quando puder, ou me chama que eu te oriento passo a passo."
             )
         state["checkout"] = checkout
-        await set_session_state(session_id, self._tenant.tenant_id, state)
+        await _save_session_state(session_id, self._tenant.tenant_id, state)
         return turn.reply
 
-    async def _generate_pix_for_checkout(
+    async def _generate_payment_for_checkout(
         self,
         *,
         phone: str,
@@ -520,7 +725,8 @@ class ZWAFTeam:
         collected: dict,
         resolved_address: dict,
     ) -> str:
-        """Gera a cobranca/Pix a partir dos dados ja coletados e validados."""
+        """Gera a cobranca (Pix copia-e-cola ou link de cartao) a partir dos dados
+        ja coletados e validados. O `billing_type` decide o meio (story-042)."""
         from zwaf.tools.payment import make_payment_link_generator
 
         generator = make_payment_link_generator(self._tenant.tenant_id, self._tenant.payment)
@@ -572,6 +778,22 @@ def _quantity_in_message(message: str) -> Optional[int]:
 def _extract_quantity(message: str) -> int:
     """Extrai a quantidade de potes/unidades da mensagem-gatilho. Default 1."""
     return _quantity_in_message(message) or 1
+
+
+def _detect_billing_type(message: str) -> Optional[str]:
+    """Meio de pagamento explicito na mensagem, ou None se ausente (story-042).
+
+    "cartao"/"credito"/"parcelar" -> CREDIT_CARD; "pix" -> PIX. Distingue
+    "nao mencionou" (None, mantem o default/lembrado) de uma escolha explicita,
+    espelhando `_quantity_in_message`. Cartao tem prioridade quando ambos
+    aparecem (ex.: "nao quero pix, prefiro cartao").
+    """
+    text = message or ""
+    if _CARD_RE.search(text):
+        return "CREDIT_CARD"
+    if _PIX_RE.search(text):
+        return "PIX"
+    return None
 
 
 def _should_escalate_address(
@@ -642,6 +864,98 @@ def _make_purchase_history_fn(db_url: str, tenant_id: str) -> Callable[[str], bo
     return has_purchase_history
 
 
+class InventoryReservationSweepScheduler:
+    """APScheduler interval job that releases expired inventory reservations."""
+
+    def __init__(self, tenant_id: str, interval_minutes: int = 5):
+        self._tenant_id = tenant_id
+        self._interval_minutes = interval_minutes
+        self._scheduler: Any | None = None
+
+    def start(self) -> None:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+        self._scheduler = AsyncIOScheduler()
+        self._scheduler.add_job(
+            self._release_expired,
+            trigger="interval",
+            minutes=self._interval_minutes,
+            id=f"inventory_release_expired_{self._tenant_id}",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        self._scheduler.start()
+        logger.info(
+            "InventoryReservationSweepScheduler started",
+            extra={"tenant_id": self._tenant_id, "interval_minutes": self._interval_minutes},
+        )
+
+    def stop(self) -> None:
+        if self._scheduler and self._scheduler.running:
+            self._scheduler.shutdown(wait=False)
+
+    async def _release_expired(self) -> int:
+        from zwaf.memory.inventory_store import release_expired
+
+        released = await release_expired(tenant_id=self._tenant_id)
+        logger.info(
+            "Inventory expired reservations released",
+            extra={"tenant_id": self._tenant_id, "released": released},
+        )
+        return released
+
+
+class LeadMemoryRetentionScheduler:
+    """APScheduler job que purga memória de lead vencida (story-044, LGPD).
+
+    Roda 1x/dia chamando `lead_store.purge_expired_memory`. Idempotente e sem PII
+    em log. Compliance: roda independente da feature flag (não há memória a purgar
+    enquanto a flag esteve sempre desligada — no-op).
+    """
+
+    def __init__(self, tenant_id: str, retention_months: int = 24, interval_minutes: int = 1440):
+        self._tenant_id = tenant_id
+        self._retention_months = retention_months
+        self._interval_minutes = interval_minutes
+        self._scheduler: Any | None = None
+
+    def start(self) -> None:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+        self._scheduler = AsyncIOScheduler()
+        self._scheduler.add_job(
+            self._purge,
+            trigger="interval",
+            minutes=self._interval_minutes,
+            id=f"lead_memory_retention_{self._tenant_id}",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        self._scheduler.start()
+        logger.info(
+            "LeadMemoryRetentionScheduler started",
+            extra={"tenant_id": self._tenant_id, "retention_months": self._retention_months},
+        )
+
+    def stop(self) -> None:
+        if self._scheduler and self._scheduler.running:
+            self._scheduler.shutdown(wait=False)
+
+    async def _purge(self) -> int:
+        from zwaf.memory.lead_store import purge_expired_memory
+
+        purged = await purge_expired_memory(
+            tenant_id=self._tenant_id, retention_months=self._retention_months
+        )
+        logger.info(
+            "Lead memory retention purge",
+            extra={"tenant_id": self._tenant_id, "purged": purged},
+        )
+        return purged
+
+
 def build_team(
     tenant_config: TenantConfig,
     db_url: str = "",
@@ -702,11 +1016,32 @@ def build_team(
             tenant_config.fidelizacao.get("trigger_days_after_purchase", 30),
         )
 
+    inventory_sweep_scheduler = InventoryReservationSweepScheduler(
+        tenant_id=tenant_config.tenant_id,
+        interval_minutes=5,
+    )
+    inventory_sweep_scheduler.start()
+
+    # Story-044: purga de memória de lead vencida (LGPD). Retenção herda
+    # lgpd.data_retention_days (ex.: 730 = 24 meses) ou cai em 24 meses.
+    try:
+        retention_days = int((tenant_config.lgpd or {}).get("data_retention_days", 0) or 0)
+    except (TypeError, ValueError):
+        retention_days = 0
+    retention_months = max(1, retention_days // 30) if retention_days else 24
+    lead_memory_retention_scheduler = LeadMemoryRetentionScheduler(
+        tenant_id=tenant_config.tenant_id,
+        retention_months=retention_months,
+    )
+    lead_memory_retention_scheduler.start()
+
     team = ZWAFTeam(
         tenant_config=tenant_config,
         whatsapp_tool=whatsapp,
         router=router,
         db_url=db_url,
         fidelizacao_scheduler=fidelizacao_scheduler,
+        inventory_sweep_scheduler=inventory_sweep_scheduler,
+        lead_memory_retention_scheduler=lead_memory_retention_scheduler,
     )
     return team

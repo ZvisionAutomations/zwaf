@@ -21,12 +21,26 @@ _TENANTS_ROOT = Path(__file__).parent.parent.parent.parent / "tenants"
 
 
 def _load_prompt(tenant_id: str, agent_name: str) -> str:
-    """Carrega system prompt de tenants/{tenant_id}/prompts/{agent_name}.md."""
-    prompt_path = _TENANTS_ROOT / tenant_id / "prompts" / f"{agent_name}.md"
-    if prompt_path.exists():
-        return prompt_path.read_text(encoding="utf-8")
-    logger.warning("Prompt file not found: %s - using default", prompt_path)
-    return f"Voce e a {agent_name} da empresa. Ajude o cliente de forma cordial e eficiente."
+    """Carrega o system prompt de tenants/{tenant_id}/prompts/{agent_name}.md.
+
+    Se existir um KB do agente (`{agent_name}.kb.md` no mesmo diretorio), ele e
+    ANEXADO ao prompt — assim o conteudo de apoio (ex.: persuasao da Livia) entra
+    de fato no contexto do modelo, em vez de ser so uma referencia que ele nao le.
+    """
+    prompt_dir = _TENANTS_ROOT / tenant_id / "prompts"
+    prompt_path = prompt_dir / f"{agent_name}.md"
+    if not prompt_path.exists():
+        logger.warning("Prompt file not found: %s - using default", prompt_path)
+        return f"Voce e a {agent_name} da empresa. Ajude o cliente de forma cordial e eficiente."
+
+    prompt = prompt_path.read_text(encoding="utf-8")
+    kb_path = prompt_dir / f"{agent_name}.kb.md"
+    if kb_path.exists():
+        kb = kb_path.read_text(encoding="utf-8").strip()
+        if kb:
+            prompt = f"{prompt}\n\n---\n\n{kb}"
+            logger.info("KB anexado ao prompt: %s", kb_path.name)
+    return prompt
 
 
 def _make_llm(tenant_config: TenantConfig):
@@ -71,12 +85,20 @@ def build_agent(
     session_id: str,
     lead_id: str,
     db_url: str = "",
+    lead_memory_block: str = "",
 ) -> Agent:
     """
     Factory para construir um Agno Agent configurado para um tenant.
     Carrega o system prompt de tenants/{tenant_id}/prompts/{agent_name}.md.
+
+    Se `lead_memory_block` for fornecido (story-044), ele e ANEXADO ao final das
+    instructions — assim a memoria do lead (nome, dor, objecoes, pedido em aberto)
+    entra no contexto do modelo de forma dinamica, por request. Bloco vazio = sem
+    reinjecao (lead novo / feature flag desligada).
     """
     system_prompt = _load_prompt(tenant_config.tenant_id, agent_name)
+    if lead_memory_block:
+        system_prompt = f"{system_prompt}\n\n---\n\n{lead_memory_block}"
     model = _make_llm(tenant_config)
     db = _make_db(db_url, tenant_config.tenant_id, agent_name)
 

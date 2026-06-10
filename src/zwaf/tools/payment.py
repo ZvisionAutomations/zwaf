@@ -5,6 +5,7 @@ from datetime import date, timedelta
 import logging
 import os
 import re
+import uuid
 from typing import Any, Callable, Optional
 
 import httpx
@@ -149,6 +150,13 @@ def make_payment_link_generator(
                     await _release_failed_reservation(order_id)
                     return _MSG_GENERIC_ERROR
 
+                # Cartao (story-042): a tela hospedada do Asaas recebe o cliente
+                # de volta no successUrl com um token opaco (sem PII na URL).
+                callback = (
+                    _build_card_callback(cfg)
+                    if resolved_billing_type == "CREDIT_CARD"
+                    else None
+                )
                 resp = await client.post(
                     f"{asaas['base_url']}/payments",
                     headers=_asaas_headers(asaas),
@@ -164,6 +172,7 @@ def make_payment_link_generator(
                         price_cents=price_cents,
                         billing_type=resolved_billing_type,
                         due_days=int(cfg.get("due_days", 2)),
+                        callback=callback,
                     ),
                 )
                 resp.raise_for_status()
@@ -198,6 +207,10 @@ def make_payment_link_generator(
                         asaas_payment_id=payment_id,
                         payment_url=url,
                     )
+                    # Cartao: entrega uma mensagem amigavel com o link (a vista ou
+                    # parcelado na tela do Asaas). Demais tipos retornam a URL crua.
+                    if resolved_billing_type == "CREDIT_CARD":
+                        return _card_message(url, price_cents)
                     return url
                 logger.error("Asaas returned no payment URL: %s", _redact(data))
                 await _release_failed_reservation(order_id)
@@ -417,9 +430,10 @@ def _payment_payload(
     price_cents: int,
     billing_type: str,
     due_days: int,
+    callback: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     due_date = date.today() + timedelta(days=max(0, due_days))
-    return {
+    payload: dict[str, Any] = {
         "customer": customer_id,
         "billingType": billing_type,
         "value": round(price_cents / 100, 2),
@@ -427,6 +441,33 @@ def _payment_payload(
         "description": f"{product_name} ({quantity} un.) - {product_description}",
         "externalReference": f"{tenant_id}:{customer_phone}:{product_id}:{external_id}",
     }
+    if callback:
+        payload["callback"] = callback
+    return payload
+
+
+def _build_card_callback(payment_config: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Monta o callback do checkout de cartao com token de lead OPACO (story-042).
+
+    IMPORTANTE: o Asaas REJEITA `callback.successUrl` (HTTP 400 invalid_object) se a
+    conta nao tiver um dominio/site cadastrado em "Minha Conta > Informacoes". A
+    conta da Raiz Vital ainda nao tem -> mandar callback quebra TODA cobranca de
+    cartao. Por isso o callback so e enviado quando explicitamente habilitado via
+    `card_callback_enabled: true` no config do tenant (ligar so depois que o
+    Fernando cadastrar o dominio no Asaas). Default: desligado -> cartao funciona.
+
+    O successUrl recebe `?lead=<uuid>` (sem CPF/telefone/nome — NFR-2/AC-6).
+    """
+    if not payment_config.get("card_callback_enabled"):
+        return None
+    base = _config_value(payment_config, "return_url", "ASAAS_RETURN_URL") or _config_value(
+        payment_config, "completion_url", "ASAAS_COMPLETION_URL"
+    )
+    if not base:
+        return None
+    token = uuid.uuid4().hex
+    separator = "&" if "?" in base else "?"
+    return {"successUrl": f"{base}{separator}lead={token}", "autoRedirect": True}
 
 
 def _resolve_billing_type(requested: str, payment_config: dict[str, Any]) -> str:
@@ -480,13 +521,40 @@ def _format_brl(price_cents: int) -> str:
     return f"R$ {formatted}"
 
 
+# Separador interno de mensagens: o `send_response` quebra a resposta em N
+# mensagens de WhatsApp. Caractere de controle (unit separator) — nao aparece em
+# texto normal nem em codigo Pix EMV, entao e seguro como sentinel.
+MESSAGE_SPLIT = "\x1f__SPLIT__\x1f"
+
+
 def _pix_message(payload: str, price_cents: int) -> str:
-    """Mensagem com o copia-e-cola para envio LITERAL no chat (story-041 FR-1)."""
+    """Pix em DUAS mensagens: anuncio + codigo PURO.
+
+    A 1a mensagem avisa e a 2a traz SO o copia-e-cola, para o cliente copiar
+    apenas o codigo (sem texto junto) e colar no banco. O `send_response` divide
+    por MESSAGE_SPLIT e envia cada parte separada.
+    """
+    intro = (
+        "Prontinho! Vou te mandar o codigo Pix copia-e-cola na proxima mensagem "
+        f"({_format_brl(price_cents)}). E so copiar e colar no app do seu banco. "
+        "Assim que o pagamento cair, eu te confirmo por aqui. \U0001f447"
+    )
+    return f"{intro}{MESSAGE_SPLIT}{payload}"
+
+
+def _card_message(url: str, price_cents: int) -> str:
+    """Mensagem com o link de cartao para envio LITERAL no chat (story-042 FR-1).
+
+    O cliente paga a vista ou parcela na tela hospedada do Asaas (parcelamento e
+    juros ao cliente sao configurados na conta). O valor exibido e o a vista, ja
+    com o markup de cartao aplicado.
+    """
     return (
-        "Prontinho! Pra finalizar, e so copiar o codigo Pix abaixo e colar no app do "
-        f"seu banco ({_format_brl(price_cents)}):\n\n"
-        f"{payload}\n\n"
-        "Assim que o pagamento cair, eu te confirmo por aqui."
+        "Prontinho! Pra pagar no cartao (a vista ou parcelado), e so acessar o "
+        f"link seguro abaixo ({_format_brl(price_cents)} a vista):\n\n"
+        f"{url}\n\n"
+        "No proprio link voce escolhe o numero de parcelas. Assim que o pagamento "
+        "for aprovado, eu te confirmo por aqui."
     )
 
 

@@ -16,6 +16,7 @@ def build_suporte_agent(
     session_id: str,
     lead_id: str,
     db_url: str = "",
+    lead_memory_block: str = "",
 ) -> Agent:
     """
     Suporte: responde duvidas com base na knowledge base (RAG),
@@ -37,4 +38,5 @@ def build_suporte_agent(
         session_id=session_id,
         lead_id=lead_id,
         db_url=db_url,
+        lead_memory_block=lead_memory_block,
     )
