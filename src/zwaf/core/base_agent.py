@@ -85,12 +85,20 @@ def build_agent(
     session_id: str,
     lead_id: str,
     db_url: str = "",
+    lead_memory_block: str = "",
 ) -> Agent:
     """
     Factory para construir um Agno Agent configurado para um tenant.
     Carrega o system prompt de tenants/{tenant_id}/prompts/{agent_name}.md.
+
+    Se `lead_memory_block` for fornecido (story-044), ele e ANEXADO ao final das
+    instructions — assim a memoria do lead (nome, dor, objecoes, pedido em aberto)
+    entra no contexto do modelo de forma dinamica, por request. Bloco vazio = sem
+    reinjecao (lead novo / feature flag desligada).
     """
     system_prompt = _load_prompt(tenant_config.tenant_id, agent_name)
+    if lead_memory_block:
+        system_prompt = f"{system_prompt}\n\n---\n\n{lead_memory_block}"
     model = _make_llm(tenant_config)
     db = _make_db(db_url, tenant_config.tenant_id, agent_name)
 

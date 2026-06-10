@@ -93,5 +93,14 @@
   "lgpd": {
     "consent_required": true,
     "data_retention_days": 730
+  },
+
+  "lead_memory": {
+    "enabled": false,
+    "throttle_turns": 6,
+    "summarize_last_n_runs": 12,
+    "summarizer_model": "gemini-1.5-flash",
+    "reinject_max_chars": 1000,
+    "_note": "story-044. enabled=false ate F1-F5 prontas e validadas; ligar so apos QA. Retencao herda lgpd.data_retention_days (730d = 24m)."
   }
 }

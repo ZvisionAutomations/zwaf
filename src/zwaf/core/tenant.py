@@ -104,6 +104,7 @@ class TenantConfig:
     lgpd: dict[str, Any]
     payment: Optional[dict[str, Any]] = None
     fidelizacao: Optional[dict[str, Any]] = None
+    lead_memory: Optional[dict[str, Any]] = None  # story-044: feature flag + params
 
     # ─────────────────────────────────────────────────────────
     # Factory
@@ -206,6 +207,7 @@ class TenantConfig:
             lgpd=data["lgpd"],
             payment=data.get("payment"),
             fidelizacao=data.get("fidelizacao"),
+            lead_memory=data.get("lead_memory"),
         )
 
 

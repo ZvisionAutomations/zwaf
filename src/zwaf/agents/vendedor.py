@@ -17,6 +17,7 @@ def build_vendedor_agent(
     lead_id: str,
     db_url: str = "",
     payment_result_sink: dict | None = None,
+    lead_memory_block: str = "",
 ) -> Agent:
     """
     Vendedor: primeiro contato, apresentacao do produto, contorno de objecoes,
@@ -46,4 +47,5 @@ def build_vendedor_agent(
         session_id=session_id,
         lead_id=lead_id,
         db_url=db_url,
+        lead_memory_block=lead_memory_block,
     )

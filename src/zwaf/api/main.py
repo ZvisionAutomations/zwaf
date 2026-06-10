@@ -112,6 +112,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception:
             pass
 
+    # Shutdown: parar schedulers de retencao de memoria de lead (story-044)
+    for tenant_id, team in teams.items():
+        try:
+            scheduler = getattr(team, "_lead_memory_retention_scheduler", None)
+            if scheduler:
+                scheduler.stop()
+        except Exception:
+            pass
+
     logger.info("ZWAF shutting down")
 
 

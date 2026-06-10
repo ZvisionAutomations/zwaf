@@ -17,6 +17,7 @@ from zwaf.conversion.checkout_policy import is_opt_out_message
 from zwaf.conversion.intelligence import ConversionAction, LeadSignal, analyze_message
 from zwaf.core.router_agent import RouterAgent, RouteResult
 from zwaf.core.tenant import TenantConfig
+from zwaf.memory.lead_memory import build_memory_block, maybe_update_lead_memory
 from zwaf.memory.lead_store import append_conversion_event, mark_opt_out
 from zwaf.memory.session import (
     acquire_session_lock,
@@ -33,6 +34,9 @@ logger = logging.getLogger("zwaf.core.team")
 # Story-041: limite de turnos no modo checkout deterministico antes de desistir e
 # voltar ao atendimento normal (rede de seguranca contra cliente preso na coleta).
 MAX_CHECKOUT_ATTEMPTS = 4
+
+# Story-044: agentes cuja conversa alimenta o summarizer de memória de lead.
+_SUMMARIZABLE_AGENTS = {"vendedor", "recompra", "suporte", "cobranca"}
 
 CHECKOUT_PAYMENT_LOCK_NAME = "checkout_pix"  # nome do lock mantido por compat. Redis
 CHECKOUT_PAYMENT_LOCK_TTL_SECONDS = 20
@@ -141,6 +145,7 @@ class ZWAFTeam:
         db_url: str = "",
         fidelizacao_scheduler=None,
         inventory_sweep_scheduler=None,
+        lead_memory_retention_scheduler=None,
     ):
         self._tenant = tenant_config
         self._whatsapp = whatsapp_tool
@@ -150,6 +155,7 @@ class ZWAFTeam:
         # Referencia ao scheduler para shutdown no lifespan
         self._fidelizacao_scheduler = fidelizacao_scheduler
         self._inventory_sweep_scheduler = inventory_sweep_scheduler
+        self._lead_memory_retention_scheduler = lead_memory_retention_scheduler
 
     async def send_response(self, phone: str, text: str, session_id: str) -> None:
         """Envia resposta via WhatsApp — interface publica para o webhook.
@@ -265,13 +271,15 @@ class ZWAFTeam:
             signal=conversion_signal.to_dict(),
         )
 
-        # 3. Execute agent
+        # 3. Execute agent — monta a memoria do lead (story-044), so com a flag ON.
+        lead_memory_block = await self._build_lead_memory_block(session_id, phone)
         response_text = await self._run_agent(
             agent_name=route.agent_name,
             message=guard_result.sanitized_input,
             session_id=session_id,
             lead_id=lead_id,
             phone=phone,
+            lead_memory_block=lead_memory_block,
         )
 
         return TeamResponse(
@@ -284,6 +292,46 @@ class ZWAFTeam:
             conversion_signal=conversion_signal,
         )
 
+    async def _build_lead_memory_block(self, session_id: str, phone: str) -> str:
+        """Monta o bloco de memoria do lead (story-044).
+
+        Retorna '' quando a feature flag esta desligada (comportamento atual,
+        regressao zero) ou quando o lead nao tem relacao previa. Nunca propaga
+        excecao — falha de memoria nao pode travar a venda.
+        """
+        cfg = getattr(self._tenant, "lead_memory", None) or {}
+        if not cfg.get("enabled"):
+            return ""
+        try:
+            state = await get_session_state(session_id, self._tenant.tenant_id)
+            max_chars = int(cfg.get("reinject_max_chars", 1000) or 1000)
+            return await build_memory_block(
+                phone,
+                self._tenant.tenant_id,
+                session_state=state,
+                max_chars=max_chars,
+            )
+        except Exception as e:
+            logger.warning("lead memory block build failed: %s", e)
+            return ""
+
+    async def update_lead_memory(self, *, phone: str, session_id: str, agent_name: str) -> bool:
+        """Dispara o summarizer pós-resposta (story-044, F3).
+
+        Chamado pelo webhook via asyncio.create_task APÓS o envio da resposta —
+        fora do caminho quente. Best-effort: a flag e o throttle são decididos
+        dentro de maybe_update_lead_memory; nunca propaga exceção.
+        """
+        name = agent_name if agent_name in _SUMMARIZABLE_AGENTS else "vendedor"
+        return await maybe_update_lead_memory(
+            phone=phone,
+            tenant_id=self._tenant.tenant_id,
+            session_id=session_id,
+            agent_name=name,
+            tenant_config=self._tenant,
+            db_url=self._db_url,
+        )
+
     async def _run_agent(
         self,
         agent_name: str,
@@ -291,6 +339,7 @@ class ZWAFTeam:
         session_id: str,
         lead_id: str,
         phone: str = "",
+        lead_memory_block: str = "",
     ) -> str:
         """Constroi e executa o agente especializado com fallback."""
         # Sink por-request: a tool de pagamento registra aqui mensagens
@@ -298,7 +347,13 @@ class ZWAFTeam:
         # presente, ela e enviada LITERALMENTE ao cliente, sem parafrase do LLM —
         # garante consistencia mesmo com modelos que tendem a reescrever erros.
         payment_sink: dict[str, Any] = {}
-        agent = self._build_agent(agent_name, session_id, lead_id, result_sink=payment_sink)
+        agent = self._build_agent(
+            agent_name,
+            session_id,
+            lead_id,
+            result_sink=payment_sink,
+            lead_memory_block=lead_memory_block,
+        )
         try:
             run_response = await agent.arun(message)
             llm_reply = run_response.content or ""
@@ -392,6 +447,7 @@ class ZWAFTeam:
         session_id: str,
         lead_id: str,
         result_sink: Optional[dict] = None,
+        lead_memory_block: str = "",
     ):
         """Factory: constroi o agente Agno correto para o nome dado."""
         kwargs: Any = dict(
@@ -404,16 +460,20 @@ class ZWAFTeam:
 
         if agent_name == "vendedor":
             from zwaf.agents.vendedor import build_vendedor_agent
-            return build_vendedor_agent(payment_result_sink=result_sink, **kwargs)
+            return build_vendedor_agent(
+                payment_result_sink=result_sink,
+                lead_memory_block=lead_memory_block,
+                **kwargs,
+            )
         if agent_name == "recompra":
             from zwaf.agents.recompra import build_recompra_agent
-            return build_recompra_agent(**kwargs)
+            return build_recompra_agent(lead_memory_block=lead_memory_block, **kwargs)
         if agent_name == "suporte":
             from zwaf.agents.suporte import build_suporte_agent
-            return build_suporte_agent(**kwargs)
+            return build_suporte_agent(lead_memory_block=lead_memory_block, **kwargs)
         if agent_name == "cobranca":
             from zwaf.agents.cobranca import build_cobranca_agent
-            return build_cobranca_agent(**kwargs)
+            return build_cobranca_agent(lead_memory_block=lead_memory_block, **kwargs)
 
         if agent_name == "fidelizacao":
             logger.warning(
@@ -422,11 +482,15 @@ class ZWAFTeam:
                 "Redirecionando para vendedor."
             )
             from zwaf.agents.vendedor import build_vendedor_agent
-            return build_vendedor_agent(payment_result_sink=result_sink, **kwargs)
+            return build_vendedor_agent(
+                payment_result_sink=result_sink,
+                lead_memory_block=lead_memory_block,
+                **kwargs,
+            )
 
         logger.warning("Unknown agent name '%s' — defaulting to vendedor", agent_name)
         from zwaf.agents.vendedor import build_vendedor_agent
-        return build_vendedor_agent(**kwargs)
+        return build_vendedor_agent(lead_memory_block=lead_memory_block, **kwargs)
 
     # ─── Checkout deterministico (story-041) ──────────────
 
@@ -842,6 +906,56 @@ class InventoryReservationSweepScheduler:
         return released
 
 
+class LeadMemoryRetentionScheduler:
+    """APScheduler job que purga memória de lead vencida (story-044, LGPD).
+
+    Roda 1x/dia chamando `lead_store.purge_expired_memory`. Idempotente e sem PII
+    em log. Compliance: roda independente da feature flag (não há memória a purgar
+    enquanto a flag esteve sempre desligada — no-op).
+    """
+
+    def __init__(self, tenant_id: str, retention_months: int = 24, interval_minutes: int = 1440):
+        self._tenant_id = tenant_id
+        self._retention_months = retention_months
+        self._interval_minutes = interval_minutes
+        self._scheduler: Any | None = None
+
+    def start(self) -> None:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+        self._scheduler = AsyncIOScheduler()
+        self._scheduler.add_job(
+            self._purge,
+            trigger="interval",
+            minutes=self._interval_minutes,
+            id=f"lead_memory_retention_{self._tenant_id}",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        self._scheduler.start()
+        logger.info(
+            "LeadMemoryRetentionScheduler started",
+            extra={"tenant_id": self._tenant_id, "retention_months": self._retention_months},
+        )
+
+    def stop(self) -> None:
+        if self._scheduler and self._scheduler.running:
+            self._scheduler.shutdown(wait=False)
+
+    async def _purge(self) -> int:
+        from zwaf.memory.lead_store import purge_expired_memory
+
+        purged = await purge_expired_memory(
+            tenant_id=self._tenant_id, retention_months=self._retention_months
+        )
+        logger.info(
+            "Lead memory retention purge",
+            extra={"tenant_id": self._tenant_id, "purged": purged},
+        )
+        return purged
+
+
 def build_team(
     tenant_config: TenantConfig,
     db_url: str = "",
@@ -908,6 +1022,19 @@ def build_team(
     )
     inventory_sweep_scheduler.start()
 
+    # Story-044: purga de memória de lead vencida (LGPD). Retenção herda
+    # lgpd.data_retention_days (ex.: 730 = 24 meses) ou cai em 24 meses.
+    try:
+        retention_days = int((tenant_config.lgpd or {}).get("data_retention_days", 0) or 0)
+    except (TypeError, ValueError):
+        retention_days = 0
+    retention_months = max(1, retention_days // 30) if retention_days else 24
+    lead_memory_retention_scheduler = LeadMemoryRetentionScheduler(
+        tenant_id=tenant_config.tenant_id,
+        retention_months=retention_months,
+    )
+    lead_memory_retention_scheduler.start()
+
     team = ZWAFTeam(
         tenant_config=tenant_config,
         whatsapp_tool=whatsapp,
@@ -915,5 +1042,6 @@ def build_team(
         db_url=db_url,
         fidelizacao_scheduler=fidelizacao_scheduler,
         inventory_sweep_scheduler=inventory_sweep_scheduler,
+        lead_memory_retention_scheduler=lead_memory_retention_scheduler,
     )
     return team

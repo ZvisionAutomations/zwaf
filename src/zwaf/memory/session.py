@@ -62,6 +62,38 @@ async def set_session_state(session_id: str, tenant_id: str, state: dict, ttl_se
         logger.warning("Failed to save session state: %s", e)
 
 
+async def bump_summary_counter(session_id: str, tenant_id: str, ttl_seconds: int = 86400) -> int:
+    """Incrementa o contador de turnos desde o último resumo (story-044, throttle).
+
+    Retorna o valor atual. Em caso de Redis indisponível retorna 0 — o que mantém
+    o summarizer desligado por degradação graciosa (0 < throttle), nunca dispara
+    sem Redis.
+    """
+    try:
+        import redis.asyncio as aioredis
+        client = aioredis.from_url(_REDIS_URL)
+        key = f"zwaf:{tenant_id}:summary_turns:{session_id}"
+        val = await client.incr(key)
+        await client.expire(key, ttl_seconds)
+        await client.aclose()
+        return int(val)
+    except Exception as e:
+        logger.warning("bump_summary_counter unavailable: %s", e)
+        return 0
+
+
+async def reset_summary_counter(session_id: str, tenant_id: str) -> None:
+    """Zera o contador de turnos desde o último resumo (story-044)."""
+    try:
+        import redis.asyncio as aioredis
+        client = aioredis.from_url(_REDIS_URL)
+        key = f"zwaf:{tenant_id}:summary_turns:{session_id}"
+        await client.delete(key)
+        await client.aclose()
+    except Exception as e:
+        logger.warning("reset_summary_counter unavailable: %s", e)
+
+
 async def acquire_session_lock(
     *,
     tenant_id: str,
