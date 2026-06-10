@@ -573,6 +573,12 @@ class ZWAFTeam:
         if switched_billing is not None:
             checkout["billing_type"] = switched_billing
 
+        # Bug-fix: se o cliente corrigir a quantidade durante a coleta ("mas quero
+        # 2 potes"), atualiza — antes a mudanca era ignorada e cobrava a qty antiga.
+        switched_qty = _quantity_in_message(message)
+        if switched_qty is not None:
+            checkout["quantity"] = switched_qty
+
         turn = await advance_checkout(message, checkout.get("fields", {}))
         checkout["fields"] = turn.collected
 

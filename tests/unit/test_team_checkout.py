@@ -324,6 +324,60 @@ async def test_quantity_in_trigger_overrides_persisted(team):
     assert "5 potes" in reply
 
 
+# ─── BUG-FIX: dados sem rotulo + troca de quantidade na coleta (caso Miguel) ──────────────
+
+UNLABELED_DATA_MSG = "Miguel Augusto Oliveira\n53812532816\n06754060\n167"
+
+
+@pytest.mark.asyncio
+async def test_unlabeled_positional_data_generates_pix(team, _mock_viacep, _mock_pix):
+    """Caso real Miguel: cliente copia os VALORES sem os rotulos -> deve funcionar.
+
+    Antes: o nome nunca era extraido de texto livre -> loop 'faltou nome completo'.
+    """
+    t, store = team
+    await _signal_handle(t, "quero comprar", "m1")
+    reply = await _signal_handle(t, UNLABELED_DATA_MSG, "m1")
+    assert reply == "Pix copia e cola: 00020126XYZ"
+    assert _mock_pix["customer_name"] == "Miguel Augusto Oliveira"
+    assert _mock_pix["customer_document"] == "53812532816"
+
+
+@pytest.mark.asyncio
+async def test_unlabeled_name_alone_completes_checkout(team, _mock_viacep, _mock_pix):
+    """Nome solto sem rotulo ('Miguel Augusto Oliveira') fecha a coleta quando so falta o nome."""
+    t, store = team
+    await _signal_handle(t, "quero comprar", "m2")
+    # manda CPF/CEP/numero rotulados, falta o nome
+    r1 = await _signal_handle(t, "CPF: 538.125.328-16\nCEP: 06754-060\nNumero: 167", "m2")
+    assert "nome completo" in r1
+    # agora so o nome, SEM rotulo
+    r2 = await _signal_handle(t, "Miguel Augusto Oliveira", "m2")
+    assert r2 == "Pix copia e cola: 00020126XYZ"
+    assert _mock_pix["customer_name"] == "Miguel Augusto Oliveira"
+
+
+@pytest.mark.asyncio
+async def test_command_phrase_not_captured_as_name(team):
+    """Regressao: 'quero pagar agora' (3 palavras) NAO pode virar nome do cliente."""
+    from zwaf.conversion.checkout_flow import _name_from_free_text
+    assert _name_from_free_text("quero pagar agora") == ""
+    assert _name_from_free_text("rua das flores") == ""
+    assert _name_from_free_text("Miguel Augusto Oliveira") == "Miguel Augusto Oliveira"
+
+
+@pytest.mark.asyncio
+async def test_quantity_change_during_collection(team, _mock_viacep, _mock_pix):
+    """Caso Miguel: 'mas quero 2 potes' no meio da coleta atualiza a quantidade."""
+    t, store = team
+    await _signal_handle(t, "quero comprar", "q9")  # ativa com qty 1
+    await _signal_handle(t, "mas quero 2 potes", "q9")  # corrige no meio
+    assert store["q9"]["checkout"]["quantity"] == 2
+    reply = await _signal_handle(t, UNLABELED_DATA_MSG, "q9")
+    assert reply == "Pix copia e cola: 00020126XYZ"
+    assert _mock_pix["quantity"] == 2
+
+
 # ─── STORY-042: checkout de cartao ──────────────
 
 
