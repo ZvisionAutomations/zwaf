@@ -72,6 +72,11 @@ _HIGH_INTENT_PATTERNS = [
     r"\bvou querer\b",
     r"\bquero o pix\b",
     r"\bme envia o pix\b",
+    # Story-042: intencao explicita de pagar no cartao / parcelar tambem fecha.
+    r"\bquero parcelar\b",
+    r"\bpagar (?:no |com |de |em )?cart[aã]o\b",
+    r"\bpagar parcelad[oa]\b",
+    r"\blink (?:do |no )?cart[aã]o\b",
 ]
 
 _MEDIUM_INTENT_PATTERNS = [

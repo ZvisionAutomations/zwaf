@@ -60,17 +60,25 @@ _FIELD_LABELS_PT = {
 # rotulado = maxima precisao de parsing sem tela.
 
 
-def build_transition_message(quantity: int = 1) -> str:
+def build_transition_message(quantity: int = 1, billing_type: str = "PIX") -> str:
     """Mensagem de transicao para o modo checkout, confirmando a quantidade.
 
     Story-041 HIGH-2: confirmar a quantidade aqui da ao cliente a chance de
-    corrigir antes do Pix e deixa explicito o valor que sera cobrado, fechando a
-    janela em que a quantidade poderia cair para 1 silenciosamente.
+    corrigir antes do pagamento e deixa explicito o valor que sera cobrado,
+    fechando a janela em que a quantidade poderia cair para 1 silenciosamente.
+
+    Story-042: a mesma coleta serve para Pix e cartao; so muda a palavra do meio
+    ("Pix" vs "link de pagamento no cartao") para alinhar a expectativa.
     """
     qty = max(1, int(quantity or 1))
     unit = "pote" if qty == 1 else "potes"
+    meio = (
+        "link de pagamento no cartao"
+        if (billing_type or "PIX").upper() == "CREDIT_CARD"
+        else "Pix"
+    )
     return (
-        f"Perfeito! Vou gerar seu Pix de {qty} {unit}. Pra sair certinho e sem "
+        f"Perfeito! Vou gerar seu {meio} de {qty} {unit}. Pra sair certinho e sem "
         "erro, me manda assim (pode copiar e preencher):\n\n"
         "Nome: \n"
         "CPF: \n"

@@ -1,15 +1,20 @@
 """Integracao do modo checkout deterministico no ZWAFTeam (story-041 F2)."""
 from __future__ import annotations
 
+import asyncio
+import json
+
 import pytest
+from cryptography.fernet import Fernet
 
 from zwaf.conversion.intelligence import analyze_message
 from zwaf.core import team as team_module
-from zwaf.core.team import ZWAFTeam
+from zwaf.core.team import InventoryReservationSweepScheduler, ZWAFTeam
 
 TENANT = "livia-raiz-vital"
 VALID_CPF = "529.982.247-25"
 DATA_MSG = "Nome: Maria Silva\nCPF: 529.982.247-25\nCEP: 01001-000\nNumero: 930"
+PARTIAL_DATA_MSG = "Nome: Maria Silva\nCPF: 529.982.247-25\nCEP: 01001-000"
 
 
 class FakeTenant:
@@ -119,6 +124,34 @@ async def test_full_collection_generates_pix(team, _mock_viacep, _mock_pix):
 
 
 @pytest.mark.asyncio
+async def test_checkout_fields_are_encrypted_in_session_and_decrypted_for_pix(
+    team,
+    _mock_viacep,
+    _mock_pix,
+    monkeypatch,
+):
+    """STORY-043 AC-1: Redis payload hides checkout PII and round-trips to Pix."""
+    monkeypatch.setenv("ZWAF_PII_FERNET_KEY", Fernet.generate_key().decode())
+    t, store = team
+
+    await _signal_handle(t, "quero o pix", "pii1")
+    reply = await _signal_handle(t, PARTIAL_DATA_MSG, "pii1")
+
+    assert "numero da casa" in reply
+    raw_payload = json.dumps(store["pii1"], ensure_ascii=False)
+    assert "Maria Silva" not in raw_payload
+    assert "52998224725" not in raw_payload
+    assert "01001000" not in raw_payload
+    assert store["pii1"]["checkout"]["fields"][team_module.CHECKOUT_FIELDS_ENCRYPTED_FLAG] is True
+
+    reply = await _signal_handle(t, "Numero: 930", "pii1")
+    assert reply == "Pix copia e cola: 00020126XYZ"
+    assert _mock_pix["customer_name"] == "Maria Silva"
+    assert _mock_pix["customer_document"] == "52998224725"
+    assert _mock_pix["delivery_address"]["number"] == "930"
+
+
+@pytest.mark.asyncio
 async def test_never_reasks_valid_field_across_turns(team, _mock_viacep, _mock_pix):
     t, store = team
     await _signal_handle(t, "quero o pix", "s5")
@@ -142,6 +175,53 @@ async def test_double_send_does_not_regenerate(team, _mock_viacep, _mock_pix):
     # Mesma mensagem de dados de novo: checkout ja encerrado, cai no fluxo normal.
     r2 = await _signal_handle(t, DATA_MSG, "s7")
     assert r2 is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_checkout_finalization_generates_single_pix(
+    team,
+    _mock_viacep,
+    monkeypatch,
+):
+    """STORY-043 AC-3: session Redis lock prevents duplicate concurrent Pix generation."""
+    t, store = team
+    calls = 0
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    async def fake_acquire(**kwargs):
+        return not first_started.is_set()
+
+    async def fake_release(**kwargs):
+        return None
+
+    def fake_make_generator(tenant_id, payment):
+        async def generate(**kwargs):
+            nonlocal calls
+            calls += 1
+            first_started.set()
+            await release_first.wait()
+            return "Pix copia e cola: 00020126XYZ"
+
+        return generate
+
+    monkeypatch.setattr(team_module, "acquire_session_lock", fake_acquire)
+    monkeypatch.setattr(team_module, "release_session_lock", fake_release)
+    monkeypatch.setattr("zwaf.tools.payment.make_payment_link_generator", fake_make_generator)
+
+    await _signal_handle(t, "quero o pix", "lock1")
+    first = asyncio.create_task(_signal_handle(t, DATA_MSG, "lock1"))
+    await first_started.wait()
+    second = asyncio.create_task(_signal_handle(t, DATA_MSG, "lock1"))
+    await asyncio.sleep(0)
+    release_first.set()
+
+    replies = await asyncio.gather(first, second)
+
+    assert calls == 1
+    assert replies.count("Pix copia e cola: 00020126XYZ") == 1
+    assert any("ja esta sendo gerado" in reply for reply in replies)
+    assert store["lock1"]["checkout"]["active"] is False
 
 
 @pytest.mark.asyncio
@@ -242,3 +322,79 @@ async def test_quantity_in_trigger_overrides_persisted(team):
     reply = await _signal_handle(t, "quero comprar 5 potes, pode mandar o pix", "q3")
     assert store["q3"]["checkout"]["quantity"] == 5
     assert "5 potes" in reply
+
+
+# ─── STORY-042: checkout de cartao ──────────────
+
+
+@pytest.mark.asyncio
+async def test_card_intent_activates_checkout_as_credit_card(team):
+    """'quero pagar no cartao' ativa o checkout com billing_type CREDIT_CARD."""
+    t, store = team
+    reply = await _signal_handle(t, "quero pagar no cartao", "c1")
+    assert reply is not None
+    assert "Nome:" in reply  # entrou no formulario de coleta
+    assert "cartao" in reply.lower()  # transicao confirma o meio
+    assert store["c1"]["checkout"]["active"] is True
+    assert store["c1"]["checkout"]["billing_type"] == "CREDIT_CARD"
+
+
+@pytest.mark.asyncio
+async def test_card_billing_reaches_generator(team, _mock_viacep, _mock_pix):
+    """End-to-end: a escolha de cartao chega ao gerador como CREDIT_CARD."""
+    t, store = team
+    await _signal_handle(t, "quero pagar no cartao", "c2")
+    reply = await _signal_handle(t, DATA_MSG, "c2")
+    assert reply == "Pix copia e cola: 00020126XYZ"  # gerador mockado
+    assert _mock_pix["billing_type"] == "CREDIT_CARD"
+    assert store["c2"]["checkout"]["active"] is False
+
+
+@pytest.mark.asyncio
+async def test_pix_remains_default_without_card_mention(team, _mock_viacep, _mock_pix):
+    """Regressao: sem mencao a cartao, o meio continua PIX (maior conversao)."""
+    t, _ = team
+    await _signal_handle(t, "quero o pix", "c3")
+    await _signal_handle(t, DATA_MSG, "c3")
+    assert _mock_pix["billing_type"] == "PIX"
+
+
+@pytest.mark.asyncio
+async def test_billing_switch_to_card_during_collection(team, _mock_viacep, _mock_pix):
+    """Cliente comeca no Pix e troca para cartao no meio — respeita a ultima escolha."""
+    t, store = team
+    await _signal_handle(t, "quero o pix", "c4")
+    # ainda coletando, cliente muda de ideia junto com parte dos dados
+    await _signal_handle(t, "na verdade quero no cartao\nNome: Maria Silva", "c4")
+    assert store["c4"]["checkout"]["billing_type"] == "CREDIT_CARD"
+    reply = await _signal_handle(t, "CPF: 529.982.247-25\nCEP: 01001-000\nNumero: 930", "c4")
+    assert reply == "Pix copia e cola: 00020126XYZ"
+    assert _mock_pix["billing_type"] == "CREDIT_CARD"
+
+
+@pytest.mark.asyncio
+async def test_card_preference_persisted_before_trigger(team):
+    """'prefiro cartao' antes do gatilho e lembrado quando o checkout ativa."""
+    t, store = team
+    r0 = await _signal_handle(t, "prefiro pagar no cartao", "c5")
+    # "pagar no cartao" ja e intencao de compra (story-042) -> ativa direto
+    assert store["c5"]["checkout"]["billing_type"] == "CREDIT_CARD"
+    assert r0 is not None
+
+
+@pytest.mark.asyncio
+async def test_inventory_sweep_scheduler_calls_release_expired(monkeypatch):
+    """STORY-043 AC-2 wire: scheduler job delegates to release_expired by tenant."""
+    captured = {}
+
+    async def fake_release_expired(**kwargs):
+        captured.update(kwargs)
+        return 2
+
+    monkeypatch.setattr("zwaf.memory.inventory_store.release_expired", fake_release_expired)
+    scheduler = InventoryReservationSweepScheduler("livia-raiz-vital")
+
+    released = await scheduler._release_expired()
+
+    assert released == 2
+    assert captured == {"tenant_id": "livia-raiz-vital"}

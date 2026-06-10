@@ -435,6 +435,26 @@ async def test_release_expired_only_sweeps_past_ttl(store):
     assert store.items[("livia-raiz-vital", "new-woman")]["reserved_qty"] == 1  # only o2 left
 
 
+@pytest.mark.asyncio
+async def test_release_expired_is_idempotent(store):
+    from datetime import datetime, timedelta, timezone
+
+    store.add_item("livia-raiz-vital", "new-woman", on_hand=10)
+    store.add_order("o1", "livia-raiz-vital", "new-woman")
+    await inventory_store.reserve_inventory(
+        tenant_id="livia-raiz-vital", product_id="new-woman", quantity=2, order_id="o1"
+    )
+    store.reservations["o1"]["reserved_until"] = datetime.now(timezone.utc) - timedelta(minutes=5)
+
+    first = await inventory_store.release_expired(tenant_id="livia-raiz-vital")
+    second = await inventory_store.release_expired(tenant_id="livia-raiz-vital")
+
+    assert first == 1
+    assert second == 0
+    assert store.items[("livia-raiz-vital", "new-woman")]["reserved_qty"] == 0
+    assert store.movement_types().count("expired") == 1
+
+
 # ---------------------------------------------------------------------------
 # Refund / manual adjustment / status
 # ---------------------------------------------------------------------------
