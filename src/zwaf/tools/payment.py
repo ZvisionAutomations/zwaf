@@ -521,14 +521,25 @@ def _format_brl(price_cents: int) -> str:
     return f"R$ {formatted}"
 
 
+# Separador interno de mensagens: o `send_response` quebra a resposta em N
+# mensagens de WhatsApp. Caractere de controle (unit separator) — nao aparece em
+# texto normal nem em codigo Pix EMV, entao e seguro como sentinel.
+MESSAGE_SPLIT = "\x1f__SPLIT__\x1f"
+
+
 def _pix_message(payload: str, price_cents: int) -> str:
-    """Mensagem com o copia-e-cola para envio LITERAL no chat (story-041 FR-1)."""
-    return (
-        "Prontinho! Pra finalizar, e so copiar o codigo Pix abaixo e colar no app do "
-        f"seu banco ({_format_brl(price_cents)}):\n\n"
-        f"{payload}\n\n"
-        "Assim que o pagamento cair, eu te confirmo por aqui."
+    """Pix em DUAS mensagens: anuncio + codigo PURO.
+
+    A 1a mensagem avisa e a 2a traz SO o copia-e-cola, para o cliente copiar
+    apenas o codigo (sem texto junto) e colar no banco. O `send_response` divide
+    por MESSAGE_SPLIT e envia cada parte separada.
+    """
+    intro = (
+        "Prontinho! Vou te mandar o codigo Pix copia-e-cola na proxima mensagem "
+        f"({_format_brl(price_cents)}). E so copiar e colar no app do seu banco. "
+        "Assim que o pagamento cair, eu te confirmo por aqui. \U0001f447"
     )
+    return f"{intro}{MESSAGE_SPLIT}{payload}"
 
 
 def _card_message(url: str, price_cents: int) -> str:

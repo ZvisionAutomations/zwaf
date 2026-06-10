@@ -324,6 +324,42 @@ async def test_quantity_in_trigger_overrides_persisted(team):
     assert "5 potes" in reply
 
 
+# ─── Pix em 2 mensagens: anuncio + codigo puro ──────────────
+
+
+@pytest.mark.asyncio
+async def test_send_response_splits_pix_into_two_messages():
+    """O Pix sai em 2 mensagens: a 2a e SO o codigo (copiar sem texto junto)."""
+    from zwaf.tools.payment import MESSAGE_SPLIT, _pix_message
+
+    sent: list[str] = []
+
+    class FakeWA:
+        async def send_message(self, phone, text, session_id):
+            sent.append(text)
+
+    t = ZWAFTeam(tenant_config=FakeTenant(), whatsapp_tool=FakeWA(), router=None)
+    await t.send_response(phone="5511999990001", text=_pix_message("00020126CODIGO", 14900), session_id="s")
+
+    assert len(sent) == 2
+    assert "proxima mensagem" in sent[0].lower() or "vou te mandar" in sent[0].lower()
+    assert sent[1] == "00020126CODIGO"  # 2a mensagem = SO o codigo, sem texto
+
+
+@pytest.mark.asyncio
+async def test_send_response_single_message_without_split():
+    """Resposta sem separador continua sendo uma unica mensagem."""
+    sent: list[str] = []
+
+    class FakeWA:
+        async def send_message(self, phone, text, session_id):
+            sent.append(text)
+
+    t = ZWAFTeam(tenant_config=FakeTenant(), whatsapp_tool=FakeWA(), router=None)
+    await t.send_response(phone="5511999990001", text="oi, tudo bem?", session_id="s")
+    assert sent == ["oi, tudo bem?"]
+
+
 # ─── BUG-FIX: dados sem rotulo + troca de quantidade na coleta (caso Miguel) ──────────────
 
 UNLABELED_DATA_MSG = "Miguel Augusto Oliveira\n53812532816\n06754060\n167"

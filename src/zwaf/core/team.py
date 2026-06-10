@@ -25,6 +25,7 @@ from zwaf.memory.session import (
     set_session_state,
 )
 from zwaf.security.pii import can_encrypt_pii, decrypt_pii, encrypt_pii
+from zwaf.tools.payment import MESSAGE_SPLIT
 from zwaf.tools.whatsapp import WhatsAppTool
 
 logger = logging.getLogger("zwaf.core.team")
@@ -151,8 +152,17 @@ class ZWAFTeam:
         self._inventory_sweep_scheduler = inventory_sweep_scheduler
 
     async def send_response(self, phone: str, text: str, session_id: str) -> None:
-        """Envia resposta via WhatsApp — interface publica para o webhook."""
-        await self._whatsapp.send_message(phone=phone, text=text, session_id=session_id)
+        """Envia resposta via WhatsApp — interface publica para o webhook.
+
+        Se a resposta contiver MESSAGE_SPLIT, ela e quebrada em varias mensagens
+        (ex.: Pix = anuncio + codigo puro), enviadas em sequencia. Cada parte
+        passa pela simulacao de digitacao/rate-limit do WhatsAppTool.
+        """
+        parts = text.split(MESSAGE_SPLIT) if (text and MESSAGE_SPLIT in text) else [text]
+        for part in parts:
+            chunk = part.strip()
+            if chunk:
+                await self._whatsapp.send_message(phone=phone, text=chunk, session_id=session_id)
 
     async def process(
         self,
