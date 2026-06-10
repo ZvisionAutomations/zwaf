@@ -40,6 +40,8 @@
     "completion_url": "${ASAAS_COMPLETION_URL}",
     "default_customer_cpf_cnpj": "${ASAAS_DEFAULT_CUSTOMER_CPF_CNPJ}",
     "billing_type": "PIX",
+    "_card_callback_note": "Ligar card_callback_enabled SO depois de cadastrar um dominio/site em Minha Conta > Informacoes no Asaas. Sem dominio, o callback.successUrl causa HTTP 400 e quebra o cartao.",
+    "card_callback_enabled": false,
     "products": {
       "new-woman": {
         "product_id": "nw-001",

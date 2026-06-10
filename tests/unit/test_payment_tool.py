@@ -517,7 +517,7 @@ async def test_generate_payment_link_card_returns_link_message_no_pixqrcode(monk
 
 @pytest.mark.asyncio
 async def test_generate_payment_link_card_adds_callback_with_opaque_lead_token(monkeypatch):
-    """Story-042 AC-6: successUrl leva token opaco, sem PII (CPF/telefone/nome)."""
+    """Story-042 AC-6: com callback HABILITADO, successUrl leva token opaco, sem PII."""
     fake_client = FakeAsyncClient()
     monkeypatch.setattr(payment.httpx, "AsyncClient", lambda **kwargs: fake_client)
     monkeypatch.setenv("ASAAS_API_KEY", "test-asaas-key")
@@ -526,7 +526,7 @@ async def test_generate_payment_link_card_adds_callback_with_opaque_lead_token(m
 
     generate_payment_link = payment.make_payment_link_generator(
         "livia-raiz-vital",
-        {"products": PRODUCTS},
+        {"products": PRODUCTS, "card_callback_enabled": True},
     )
 
     await generate_payment_link(
@@ -551,11 +551,45 @@ async def test_generate_payment_link_card_adds_callback_with_opaque_lead_token(m
     assert "Maria" not in success_url
 
 
-def test_card_callback_skipped_without_return_url(monkeypatch):
-    """Sem return_url configurado, nenhum callback e enviado (Asaas usa a tela padrao)."""
-    monkeypatch.delenv("ASAAS_RETURN_URL", raising=False)
-    monkeypatch.delenv("ASAAS_COMPLETION_URL", raising=False)
+@pytest.mark.asyncio
+async def test_card_no_callback_by_default_even_with_return_url(monkeypatch):
+    """Regressao do bug de PROD: sem card_callback_enabled, NAO manda callback.
+
+    O Asaas rejeita callback.successUrl (400 'dominio nao configurado') se a conta
+    nao tem dominio. O default tem que ser SEM callback -> cartao funciona.
+    """
+    fake_client = FakeAsyncClient()
+    monkeypatch.setattr(payment.httpx, "AsyncClient", lambda **kwargs: fake_client)
+    monkeypatch.setenv("ASAAS_API_KEY", "test-asaas-key")
+    monkeypatch.setenv("ASAAS_BASE_URL", "https://api-sandbox.asaas.com/v3")
+    monkeypatch.setenv("ASAAS_RETURN_URL", "https://raizvitaloficial.com.br/obrigada")
+
+    generate_payment_link = payment.make_payment_link_generator(
+        "livia-raiz-vital",
+        {"products": PRODUCTS},  # sem card_callback_enabled
+    )
+
+    result = await generate_payment_link(
+        "new-woman-1",
+        "5511999990001",
+        customer_name="Maria Silva",
+        customer_document=VALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+        billing_type="CREDIT_CARD",
+    )
+
+    assert "https://asaas.test/i/pay_123" in result  # cartao gerou normalmente
+    payment_call = next(
+        c for c in fake_client.calls if c["method"] == "POST" and c["url"].endswith("/payments")
+    )
+    assert "callback" not in payment_call["json"]  # sem callback -> sem 400
+
+
+def test_card_callback_skipped_without_flag(monkeypatch):
+    """Sem a flag card_callback_enabled, nenhum callback (mesmo com return_url)."""
+    monkeypatch.setenv("ASAAS_RETURN_URL", "https://raizvitaloficial.com.br/obrigada")
     assert payment._build_card_callback({}) is None
+    assert payment._build_card_callback({"card_callback_enabled": False}) is None
 
 
 def test_card_message_embeds_value_with_markup():

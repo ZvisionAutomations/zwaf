@@ -449,10 +449,17 @@ def _payment_payload(
 def _build_card_callback(payment_config: dict[str, Any]) -> Optional[dict[str, Any]]:
     """Monta o callback do checkout de cartao com token de lead OPACO (story-042).
 
-    O successUrl recebe `?lead=<uuid>` (sem CPF/telefone/nome — NFR-2/AC-6) para a
-    pagina de retorno reconhecer a conversa sem expor PII na URL. Sem return_url
-    configurado, retorna None (o Asaas mostra a tela padrao).
+    IMPORTANTE: o Asaas REJEITA `callback.successUrl` (HTTP 400 invalid_object) se a
+    conta nao tiver um dominio/site cadastrado em "Minha Conta > Informacoes". A
+    conta da Raiz Vital ainda nao tem -> mandar callback quebra TODA cobranca de
+    cartao. Por isso o callback so e enviado quando explicitamente habilitado via
+    `card_callback_enabled: true` no config do tenant (ligar so depois que o
+    Fernando cadastrar o dominio no Asaas). Default: desligado -> cartao funciona.
+
+    O successUrl recebe `?lead=<uuid>` (sem CPF/telefone/nome — NFR-2/AC-6).
     """
+    if not payment_config.get("card_callback_enabled"):
+        return None
     base = _config_value(payment_config, "return_url", "ASAAS_RETURN_URL") or _config_value(
         payment_config, "completion_url", "ASAAS_COMPLETION_URL"
     )
