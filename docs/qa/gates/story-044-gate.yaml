@@ -10,8 +10,8 @@ summary: >
   ligar a flag, não o merge.
 
 suite:
-  unit_tests: 329
-  new_tests: 27
+  unit_tests: 335
+  new_tests: 33
   regressions: 0
   coderabbit: "não executado (CLI em WSL, repo em G:/Google Drive — degradação graciosa)"
 
@@ -34,8 +34,8 @@ acceptance_criteria:
     result: PASS
     note: LOW-2 (sem teste dedicado de wiring multi-agente)
   - id: AC-9
-    result: CONCERNS
-    note: verificar PENDING do Pix copia-e-cola no smoke
+    result: PASS
+    note: confirmado no smoke pos-deploy 2026-06-11 (PENDING de Pix em payment_events)
   - id: AC-10
     result: PASS
     note: LOW-1 (caminho real Agno coberto por spike, não por teste unitário)
@@ -48,6 +48,7 @@ issues:
   - severity: medium
     category: requirements
     id: CONCERNS-1
+    status: RESOLVED (smoke 2026-06-11)
     description: >
       Recuperação de Pix em aberto depende de o Pix copia-e-cola registrar PENDING em
       payment_events. payment_webhook mapeia PAYMENT_CREATED->PENDING, mas não está
@@ -58,16 +59,19 @@ issues:
   - severity: low
     category: tests
     id: LOW-1
+    status: RESOLVED (smoke 2026-06-11 — get_chat_history real validado com sessao viva)
     description: _read_chat_history (caminho real Agno) não tem teste unitário (precisa sessão viva).
     recommendation: Smoke com sessão real ao ligar a flag; API já validada por spike.
   - severity: low
     category: tests
     id: LOW-2
+    status: RESOLVED (2026-06-11 — tests/unit/test_lead_memory_wiring.py)
     description: Sem teste de wiring de reinjeção em recompra/suporte/cobrança (builders idênticos ao vendedor testado).
     recommendation: Fast-follow opcional — teste de wiring multi-agente.
   - severity: low
     category: docs
     id: LOW-3
+    status: RESOLVED (2026-06-11 — secao "Memoria de lead" em recompra/suporte/cobranca)
     description: Prompts de recompra/suporte/cobrança sem a seção de postura (o bloco injetado já carrega micro-instruções).
     recommendation: Fast-follow — replicar a seção "Memoria de lead" nos demais prompts.
 
