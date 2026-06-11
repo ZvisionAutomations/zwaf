@@ -52,8 +52,8 @@ SCENARIOS = [
         description="Lead frio pergunta o preço",
         messages=["Quanto custa o produto?"],
         expected_agent="vendedor",
-        expected_contains=["R$", "165", "link"],
-        forbidden_contains=["não sei", "desculpe"],
+        expected_contains=["R$", "149"],
+        forbidden_contains=["não sei", "desculpe", "165", "185"],
         max_turns=2,
     ),
     Scenario(
@@ -61,7 +61,8 @@ SCENARIOS = [
         description="Lead com objeção 'tá caro'",
         messages=["Quero comprar", "Tá caro demais, tem desconto?"],
         expected_agent="vendedor",
-        forbidden_contains=["50% off", "metade do preço", "R$ 75"],
+        expected_contains=["128"],
+        forbidden_contains=["50% off", "metade do preço", "R$ 75", "165", "185"],
         max_turns=3,
     ),
     Scenario(
@@ -70,7 +71,7 @@ SCENARIOS = [
         messages=["Quais são os ingredientes do New Woman?"],
         expected_agent="vendedor",
         expected_contains=["New Woman", "ingrediente"],
-        forbidden_contains=["não tenho essa informação", "não sei"],
+        forbidden_contains=["não tenho essa informação", "não sei", "colágeno", "colageno", "mineral"],
         max_turns=2,
     ),
     Scenario(
@@ -108,9 +109,10 @@ SCENARIOS = [
     ),
     Scenario(
         name="mensagem_madrugada",
-        description="Lead manda mensagem às 2h da manhã",
+        description="Lead manda mensagem às 2h da manhã — abertura qualificadora sem preço (AC1)",
         messages=["oi, quero saber mais sobre o produto"],
         expected_agent="vendedor",
+        forbidden_contains=["R$", "149", "128"],
         max_turns=1,
     ),
     Scenario(
@@ -201,17 +203,17 @@ async def run_scenario(scenario: Scenario, team=None) -> ScenarioResult:
 def _get_mock_responses(scenario: Scenario) -> dict[int, str]:
     """Respostas mock para cada cenário (sem LLM real)."""
     mocks = {
-        "lead_frio_preco": {0: "O New Woman sai por R$165,90 no Pix ou R$185,00 no cartao. Posso te enviar o link para comprar agora?"},
+        "lead_frio_preco": {0: "Que bom seu interesse! Antes, me conta: faz quanto tempo você sente esses sintomas? No Pix o pote avulso fica R$149 e a partir de 2 potes cai pra R$128 cada, com frete gratis 😊"},
         "lead_objecao_caro": {
-            0: "Olá! Fico feliz que tenha interesse! O que posso fazer por você?",
-            1: "Entendo! O New Woman tem um valor especial pelos ingredientes premium. Posso explicar todos os benefícios? Assim você consegue avaliar melhor o custo-benefício!",
+            0: "Olá! Que bom seu interesse! Me conta um pouco o que você está sentindo?",
+            1: "Entendo! O New Woman funciona melhor como tratamento continuo. No Pix, a partir de 2 potes o valor cai pra R$128 cada e o frete e gratis. Faz sentido pra você?",
         },
-        "lead_ingredientes_new_woman": {0: "O New Woman tem como ingredientes oleo de linhaca, oleo de primula do campo, oleo de borragem e vitamina E. Quer ver a ficha tecnica completa?"},
+        "lead_ingredientes_new_woman": {0: "O New Woman tem como ingredientes oleo de linhaca, oleo de primula, oleo de borragem e vitamina E. Quer ver a ficha tecnica completa?"},
         "cliente_recompra": {0: "Que ótimo que adorou! Vou gerar seu link de recompra agora. Aqui está o link de pagamento via Pix: https://pay.abacatepay.com/recompra123"},
         "pedido_nao_chegou": {0: "Que pena! Pode me informar o número do pedido para eu verificar o rastreio? 📦"},
         "problema_pix": {0: "Vou gerar um novo link Pix para você agora! Aqui está: https://pay.abacatepay.com/novo-link"},
         "pagamento_confirmado": {0: "Pagamento confirmado! 🎉 Seu pedido foi gerado. Você receberá por Correios em 5-7 dias úteis."},
-        "mensagem_madrugada": {0: "Olá! Que bom ouvir de você! Posso te contar tudo sobre nossos produtos 😊"},
+        "mensagem_madrugada": {0: "Oi! Sou a Lívia da Raiz Vital 😊 O que te trouxe até aqui hoje?"},
         "prompt_injection": {0: "Desculpe, não posso processar essa mensagem. Se precisar de ajuda, pode reformular?"},
         "escalacao_humano": {
             0: "Posso te ajudar! Me conta o que está acontecendo que eu resolvo 😊",

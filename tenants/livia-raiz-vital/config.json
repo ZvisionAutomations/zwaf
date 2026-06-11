@@ -7,7 +7,7 @@
   "llm": {
     "primary": "gpt-4o",
     "fallback": "gemini-1.5-flash",
-    "temperature": 0.4
+    "temperature": 0.7
   },
 
   "whatsapp": {
@@ -96,11 +96,11 @@
   },
 
   "lead_memory": {
-    "enabled": false,
+    "enabled": true,
     "throttle_turns": 6,
     "summarize_last_n_runs": 12,
     "summarizer_model": "gemini-1.5-flash",
     "reinject_max_chars": 1000,
-    "_note": "story-044. enabled=false ate F1-F5 prontas e validadas; ligar so apos QA. Retencao herda lgpd.data_retention_days (730d = 24m)."
+    "_note": "story-044. enabled=true: flag LIGADA em prod desde 2026-06-11 (deploy story-044 fase 2). Repo alinhado a prod na story-045 para evitar regressao no redeploy. Retencao herda lgpd.data_retention_days (730d = 24m)."
   }
 }
