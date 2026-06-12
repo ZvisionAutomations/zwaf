@@ -73,13 +73,19 @@ CNPJ: 61.455.826/0001-30
 
 ## Politica Comercial
 
-| SKU | Cartao | Pix |
-|-----|--------|-----|
-| 1 pote | R$ 185,00 | R$ 165,90 |
-| 2 potes | R$ 347,90 | R$ 335,90 |
-| 3 potes | R$ 448,90 | R$ 422,90 |
+<!-- Precos corrigidos na story-045 para a fonte viva (config.json / story-028). A tool
+     search_catalog injeta este arquivo no modelo, entao a tabela tem que bater com o vendedor.md. -->
 
-- Frete gratis em compras acima de R$ 300
+Preco por pote no Pix (quanto mais potes, mais barato o pote):
+
+| Quantidade | Pix (por pote) |
+|------------|----------------|
+| 1 pote | R$ 149,00 |
+| 2 a 4 potes | R$ 128,00 cada |
+| 5 potes ou mais | R$ 119,90 cada |
+
+- No cartao de credito, cerca de 10% a mais que no Pix.
+- Frete gratis para todos os pedidos no momento (sem minimo).
 - Frete via Melhor Envio ou Super Frete
 - Prazo de entrega: Sudeste 3-5 dias uteis | Sul/CO 5-7 | Norte/Nordeste 7-10
 - Estoque atual: 510 potes
@@ -101,7 +107,7 @@ R: A maioria comeca a notar melhorias nas primeiras 2 a 3 semanas. Para resultad
 R: Ingredientes naturais, bem tolerados. Em casos raros pode haver leve desconforto gastrointestinal no inicio. Se usar medicamentos, consulte medico.
 
 **Q: Quanto demora o prazo de entrega?**
-R: Sudeste: 3-5 dias uteis | Sul/CO: 5-7 | Norte/NE: 7-10. Frete gratis em compras acima de R$ 300.
+R: Sudeste: 3-5 dias uteis | Sul/CO: 5-7 | Norte/NE: 7-10. Frete gratis para todos os pedidos no momento.
 
 ---
 
