@@ -272,6 +272,29 @@ Checklist:
   `src\zwaf\memory\session.py` e `src\zwaf\memory\lead_memory.py`.
 - O gate formal esta em `docs/qa/gates/story-046-livia-outros-agentes-prompt-rewrite-gate.md`.
 
+## Deploy Record (@devops / Pipeline)
+
+- 2026-06-12: Deploy na VPS Raiz Vital (EC2 `i-000571bfa6d74246b`, EIP `56.125.161.233`) via
+  EC2 Instance Connect. Porta 22 ja estava acessivel pelo IP atual; sem alteracao de Security Group.
+- Commit deployado: `a4a20fc` (`caio/feat/livia-outros-agentes-prompts`). Pacote por
+  `git archive` contendo apenas os quatro prompts de agentes e `harnesses/conversation_harness.py`;
+  sem migrations, sem env, sem checkout e sem codigo Python de producao.
+- Backup pre-deploy criado em `/opt/zwaf/backups/pre-046-20260612-134750/` com os cinco arquivos
+  substituidos.
+- Rebuild/restart executado com
+  `docker compose -f docker-compose.client.yml -f docker-compose.https.yml --env-file .env.raiz-vital build zwaf-api`
+  e `up -d zwaf-api`.
+- Pos-deploy: container `zwaf-zwaf-api-1` healthy; logs com `/health` 200; prompts dentro do container
+  com `IDENTIDADE_BASE=True` e `PROVA_SOCIAL_DESATIVADA=True` nos quatro agentes; harness no container
+  `python -m harnesses.conversation_harness --all` -> 10/10.
+- `ruff`/`mypy` no escopo alterado dentro do container: PASS (`harnesses/conversation_harness.py`).
+- Repo-wide na VPS permanece com CONCERNS pre-existentes: `ruff check . --no-cache` aponta E741 em
+  `src/zwaf/conversion/checkout_flow.py`; `mypy src harnesses` aponta erros de stubs ausentes
+  (`asyncpg`, `apscheduler`) e pendencias ja conhecidas em `commercial_report.py`, `session.py` e
+  `lead_memory.py`.
+- Sem rollback. Pendente nao-bloqueante: E2E WhatsApp real pelo operador para validar aderencia do LLM
+  a 0.7 nos novos agentes.
+
 ## Change Log
 
 | Data | Agente | Acao |
@@ -281,3 +304,4 @@ Checklist:
 | 2026-06-11 | @architect / Stratum | Specs SDD criadas: spec, context, design e testes |
 | 2026-06-11 | @developer / Pixel | Quatro prompts reescritos, harness atualizado e verificacoes locais executadas |
 | 2026-06-11 | @quality-gate / Litmus | Gate CONCERNS; story scope PASS; harness 10/10; unit suite 335 passed; repo-wide ruff/mypy com pendencias pre-existentes |
+| 2026-06-12 | @devops / Pipeline | Deploy na VPS concluido; backup pre-046 criado; zwaf-api rebuilt/healthy; harness 10/10; ruff/mypy story-scope PASS; repo-wide CONCERNS mantido |
