@@ -59,6 +59,7 @@ def validate_checkout_ready(
     customer_name: str,
     customer_document: str,
     delivery_address: Any,
+    billing_type: str = "PIX",
 ) -> CheckoutValidation:
     normalized_product = (product_id or "").replace("_", "-").lower()
     if tenant_id == "livia-raiz-vital" and normalized_product.startswith("alpha-pulse"):
@@ -73,6 +74,9 @@ def validate_checkout_ready(
             code="blocked_product",
             message="New Woman deve ser atendido pela Livia, consultora da Raiz Vital.",
         )
+
+    if (billing_type or "PIX").upper() == "CREDIT_CARD":
+        return CheckoutValidation(ok=True, code="checkout_ready")
 
     missing: list[str] = []
     if not _has_full_name(customer_name):

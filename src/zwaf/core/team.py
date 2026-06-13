@@ -573,6 +573,7 @@ class ZWAFTeam:
         # a resposta do cliente e processada aqui antes de qualquer outra coisa.
         if state.get("pending_checkout"):
             resolved = await self._advance_precheckout(
+                phone=phone,
                 message=message,
                 session_id=session_id,
                 state=state,
@@ -609,6 +610,7 @@ class ZWAFTeam:
             )
             billing_type = mentioned_billing or state.get("last_billing_type")
             return await self._begin_checkout_or_prompt(
+                phone=phone,
                 session_id=session_id,
                 state=state,
                 quantity=quantity,
@@ -703,31 +705,28 @@ class ZWAFTeam:
                 return f"{confirm} Me confirma que eu ja te mando o link."
             return f"{confirm}\n\n{turn.reply}" if turn.reply else confirm
 
+        if checkout.get("billing_type") == "CREDIT_CARD":
+            checkout["active"] = False
+            state["checkout"] = checkout
+            await _save_session_state(session_id, self._tenant.tenant_id, state)
+            return await self._generate_payment_for_checkout_with_lock(
+                phone=phone,
+                session_id=session_id,
+                product_id=checkout.get("product_id", ""),
+                billing_type="CREDIT_CARD",
+                quantity=int(checkout.get("quantity", 1) or 1),
+                collected={},
+                resolved_address={},
+            )
+
         turn = await advance_checkout(message, checkout.get("fields", {}))
         checkout["fields"] = turn.collected
 
         if turn.ready:
             billing_type = checkout.get("billing_type", "PIX")
-            lock_acquired = await acquire_session_lock(
-                tenant_id=self._tenant.tenant_id,
-                session_id=session_id,
-                lock_name=CHECKOUT_PAYMENT_LOCK_NAME,
-                ttl_seconds=CHECKOUT_PAYMENT_LOCK_TTL_SECONDS,
-            )
-            if not lock_acquired:
-                state["checkout"] = checkout
-                await _save_session_state(session_id, self._tenant.tenant_id, state)
-                logger.info(
-                    "Checkout payment generation already in progress",
-                    extra={"session_id": session_id, "tenant_id": self._tenant.tenant_id},
-                )
-                meio = "link de pagamento" if billing_type == "CREDIT_CARD" else "Pix"
-                return (
-                    f"Seu {meio} ja esta sendo gerado. Se ele nao aparecer em alguns "
-                    "segundos, me chama aqui que eu confiro para voce."
-                )
-            reply = await self._generate_payment_for_checkout(
+            reply = await self._generate_payment_for_checkout_with_lock(
                 phone=phone,
+                session_id=session_id,
                 product_id=checkout.get("product_id", ""),
                 billing_type=billing_type,
                 quantity=int(checkout.get("quantity", 1) or 1),
@@ -738,11 +737,6 @@ class ZWAFTeam:
             checkout["active"] = False
             state["checkout"] = checkout
             await _save_session_state(session_id, self._tenant.tenant_id, state)
-            await release_session_lock(
-                tenant_id=self._tenant.tenant_id,
-                session_id=session_id,
-                lock_name=CHECKOUT_PAYMENT_LOCK_NAME,
-            )
             return reply
 
         # Ainda coletando: incrementa tentativas e aplica a rede de seguranca para
@@ -764,6 +758,49 @@ class ZWAFTeam:
         state["checkout"] = checkout
         await _save_session_state(session_id, self._tenant.tenant_id, state)
         return turn.reply
+
+    async def _generate_payment_for_checkout_with_lock(
+        self,
+        *,
+        phone: str,
+        session_id: str,
+        product_id: str,
+        billing_type: str,
+        quantity: int,
+        collected: dict,
+        resolved_address: dict,
+    ) -> str:
+        lock_acquired = await acquire_session_lock(
+            tenant_id=self._tenant.tenant_id,
+            session_id=session_id,
+            lock_name=CHECKOUT_PAYMENT_LOCK_NAME,
+            ttl_seconds=CHECKOUT_PAYMENT_LOCK_TTL_SECONDS,
+        )
+        if not lock_acquired:
+            logger.info(
+                "Checkout payment generation already in progress",
+                extra={"session_id": session_id, "tenant_id": self._tenant.tenant_id},
+            )
+            meio = "link de pagamento" if billing_type == "CREDIT_CARD" else "Pix"
+            return (
+                f"Seu {meio} ja esta sendo gerado. Se ele nao aparecer em alguns "
+                "segundos, me chama aqui que eu confiro para voce."
+            )
+        try:
+            return await self._generate_payment_for_checkout(
+                phone=phone,
+                product_id=product_id,
+                billing_type=billing_type,
+                quantity=quantity,
+                collected=collected,
+                resolved_address=resolved_address,
+            )
+        finally:
+            await release_session_lock(
+                tenant_id=self._tenant.tenant_id,
+                session_id=session_id,
+                lock_name=CHECKOUT_PAYMENT_LOCK_NAME,
+            )
 
     async def _generate_payment_for_checkout(
         self,
@@ -813,6 +850,7 @@ class ZWAFTeam:
     async def _begin_checkout_or_prompt(
         self,
         *,
+        phone: str,
         session_id: str,
         state: dict,
         quantity: Optional[int],
@@ -820,7 +858,8 @@ class ZWAFTeam:
         product_hint: Optional[str],
     ) -> str:
         """Decide o passo antes da coleta: sem quantidade, ancora 2-vs-1; sem meio,
-        pergunta cartao/Pix; com ambos decididos, inicia a coleta deterministica."""
+        pergunta cartao/Pix; com ambos decididos, inicia o checkout (Pix coleta no chat,
+        cartao vai pro checkout hospedado — story-046 + story-048)."""
         if quantity is None:
             state["pending_checkout"] = {
                 "stage": "quantity",
@@ -838,6 +877,7 @@ class ZWAFTeam:
             await _save_session_state(session_id, self._tenant.tenant_id, state)
             return self._billing_question_message()
         return await self._start_checkout(
+            phone=phone,
             session_id=session_id,
             state=state,
             quantity=int(quantity),
@@ -848,6 +888,7 @@ class ZWAFTeam:
     async def _advance_precheckout(
         self,
         *,
+        phone: str,
         message: str,
         session_id: str,
         state: dict,
@@ -868,6 +909,7 @@ class ZWAFTeam:
                 return None
             billing = pending.get("billing_type") or _detect_billing_type(message)
             return await self._begin_checkout_or_prompt(
+                phone=phone,
                 session_id=session_id,
                 state=state,
                 quantity=qty,
@@ -879,6 +921,7 @@ class ZWAFTeam:
             # trava a venda por causa da escolha do meio.
             billing = _detect_billing_type(message) or "PIX"
             return await self._start_checkout(
+                phone=phone,
                 session_id=session_id,
                 state=state,
                 quantity=int(pending.get("quantity", 1) or 1),
@@ -892,25 +935,54 @@ class ZWAFTeam:
     async def _start_checkout(
         self,
         *,
+        phone: str,
         session_id: str,
         state: dict,
         quantity: int,
         billing_type: str,
         product_hint: Optional[str],
     ) -> str:
-        """Ativa o modo de coleta com a quantidade e o meio ja decididos."""
+        """Inicia o checkout com a quantidade e o meio ja decididos.
+
+        Story-048: CARTAO vai para o checkout HOSPEDADO do Asaas — os dados do cliente
+        (nome/CPF/endereco) sao coletados na pagina, NAO no chat; nao ativa coleta.
+        PIX (e demais) seguem a coleta deterministica no chat (story-041/046).
+        """
+        product_id = self._default_product_id(product_hint)
+        qty = max(1, int(quantity or 1))
+        if billing_type == "CREDIT_CARD":
+            checkout = {
+                "active": False,
+                "product_id": product_id,
+                "billing_type": billing_type,
+                "quantity": qty,
+                "fields": {},
+                "attempts": 0,
+            }
+            state["checkout"] = checkout
+            state.pop("pending_checkout", None)
+            await _save_session_state(session_id, self._tenant.tenant_id, state)
+            return await self._generate_payment_for_checkout_with_lock(
+                phone=phone,
+                session_id=session_id,
+                product_id=product_id,
+                billing_type=billing_type,
+                quantity=qty,
+                collected={},
+                resolved_address={},
+            )
         checkout = {
             "active": True,
-            "product_id": self._default_product_id(product_hint),
+            "product_id": product_id,
             "billing_type": billing_type,
-            "quantity": max(1, int(quantity or 1)),
+            "quantity": qty,
             "fields": {},
             "attempts": 0,
         }
         state["checkout"] = checkout
         state.pop("pending_checkout", None)
         await _save_session_state(session_id, self._tenant.tenant_id, state)
-        return build_transition_message(checkout["quantity"], billing_type)
+        return build_transition_message(qty, billing_type)
 
     def _tenant_products(self) -> dict:
         return (getattr(self._tenant, "payment", None) or {}).get("products", {})

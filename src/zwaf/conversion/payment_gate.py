@@ -54,10 +54,15 @@ def make_guarded_payment_link_generator(
         billing_type: str = "",
         quantity: int = 0,
     ) -> str:
+        resolved_billing_type = (billing_type or "").upper()
         # Story-040: resolve o endereco (str|dict) via parser + ViaCEP ANTES de
         # validar. ViaCEP completa street/district/city/state a partir do CEP;
         # fallback resiliente usa os campos do LLM se o ViaCEP falhar (FR-6/NFR-2).
-        resolved_address = await resolve_delivery_address(delivery_address)
+        resolved_address = (
+            {}
+            if resolved_billing_type == "CREDIT_CARD"
+            else await resolve_delivery_address(delivery_address)
+        )
 
         checkout = validate_checkout_ready(
             tenant_id=tenant_id,
@@ -65,6 +70,7 @@ def make_guarded_payment_link_generator(
             customer_name=customer_name,
             customer_document=customer_document,
             delivery_address=resolved_address,
+            billing_type=resolved_billing_type or billing_type,
         )
         if not checkout.ok:
             if checkout.code == "blocked_product":

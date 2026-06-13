@@ -97,6 +97,7 @@ def make_payment_link_generator(
             customer_name=customer_name,
             customer_document=customer_document,
             delivery_address=delivery_address,
+            billing_type=resolved_billing_type,
         )
         if not checkout.ok:
             if checkout.code == "blocked_product":
@@ -138,6 +139,44 @@ def make_payment_link_generator(
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
+                if resolved_billing_type == "CREDIT_CARD":
+                    callback = _build_checkout_callback(cfg)
+                    if not callback:
+                        logger.error("Asaas checkout callback URLs not configured for card checkout")
+                        await _release_failed_reservation(order_id)
+                        return _MSG_GENERIC_ERROR
+                    resp = await client.post(
+                        f"{asaas['base_url']}/checkouts",
+                        headers=_asaas_headers(asaas),
+                        json=_checkout_payload(
+                            tenant_id=tenant_id,
+                            customer_phone=customer_phone,
+                            product_id=product_id,
+                            external_id=external_id,
+                            product_name=product_name,
+                            product_description=product_description,
+                            product_cfg=product_cfg,
+                            quantity=resolved_qty,
+                            price_cents=price_cents,
+                            callback=callback,
+                        ),
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    checkout_id = str(data.get("id", ""))
+                    url = _extract_payment_url(data)
+                    if url and checkout_id:
+                        await mark_order_payment_created(
+                            order_id=order_id,
+                            asaas_customer_id="",
+                            asaas_payment_id=checkout_id,
+                            payment_url=url,
+                        )
+                        return _card_message(url, price_cents)
+                    logger.error("Asaas checkout response without id/link: %s", _redact(data))
+                    await _release_failed_reservation(order_id)
+                    return _MSG_GENERIC_ERROR
+
                 customer_id = await _create_or_reuse_customer(
                     client=client,
                     config=asaas,
@@ -150,13 +189,7 @@ def make_payment_link_generator(
                     await _release_failed_reservation(order_id)
                     return _MSG_GENERIC_ERROR
 
-                # Cartao (story-042): a tela hospedada do Asaas recebe o cliente
-                # de volta no successUrl com um token opaco (sem PII na URL).
-                callback = (
-                    _build_card_callback(cfg)
-                    if resolved_billing_type == "CREDIT_CARD"
-                    else None
-                )
+                callback = None
                 resp = await client.post(
                     f"{asaas['base_url']}/payments",
                     headers=_asaas_headers(asaas),
@@ -446,6 +479,64 @@ def _payment_payload(
     return payload
 
 
+_TRANSPARENT_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
+
+
+def _checkout_payload(
+    tenant_id: str,
+    customer_phone: str,
+    product_id: str,
+    external_id: str,
+    product_name: str,
+    product_description: str,
+    product_cfg: dict[str, Any],
+    quantity: int,
+    price_cents: int,
+    callback: dict[str, Any],
+) -> dict[str, Any]:
+    item_quantity = max(1, int(quantity or 1))
+    unit_value = round((price_cents / item_quantity) / 100, 2)
+    image_base64 = str(
+        product_cfg.get("checkout_image_base64")
+        or product_cfg.get("image_base64")
+        or _TRANSPARENT_PNG_BASE64
+    )
+    return {
+        "billingTypes": ["CREDIT_CARD"],
+        "chargeTypes": ["DETACHED"],
+        "minutesToExpire": int(product_cfg.get("checkout_minutes_to_expire", 60) or 60),
+        "externalReference": f"{tenant_id}:{customer_phone}:{product_id}:{external_id}",
+        "callback": callback,
+        "items": [
+            {
+                "externalReference": external_id,
+                "name": product_name[:30],
+                "description": product_description[:150],
+                "quantity": item_quantity,
+                "value": unit_value,
+                "imageBase64": image_base64,
+            }
+        ],
+    }
+
+
+def _build_checkout_callback(payment_config: dict[str, Any]) -> Optional[dict[str, Any]]:
+    success = _config_value(payment_config, "completion_url", "ASAAS_COMPLETION_URL")
+    if not success:
+        success = _config_value(payment_config, "return_url", "ASAAS_RETURN_URL")
+    cancel = _config_value(payment_config, "return_url", "ASAAS_RETURN_URL") or success
+    expired = _config_value(payment_config, "expired_url", "ASAAS_EXPIRED_URL") or cancel
+    if not success or not cancel:
+        return None
+    return {
+        "successUrl": success,
+        "cancelUrl": cancel,
+        "expiredUrl": expired,
+    }
+
+
 def _build_card_callback(payment_config: dict[str, Any]) -> Optional[dict[str, Any]]:
     """Monta o callback do checkout de cartao com token de lead OPACO (story-042).
 
@@ -487,7 +578,7 @@ def _resolve_price_cents(product_cfg: dict[str, Any], billing_type: str) -> Opti
 
 
 def _extract_payment_url(data: dict[str, Any]) -> str:
-    for key in ("invoiceUrl", "bankSlipUrl", "url", "transactionReceiptUrl"):
+    for key in ("link", "invoiceUrl", "bankSlipUrl", "url", "transactionReceiptUrl"):
         value = data.get(key)
         if value:
             return str(value)

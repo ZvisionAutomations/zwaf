@@ -21,6 +21,10 @@ from zwaf.memory.inventory_store import (
     mark_refund_review_conn,
     release_reservation_for_payment_conn,
 )
+from zwaf.memory.order_store import (
+    attach_hosted_checkout_payment_conn,
+    update_order_customer_from_asaas_conn,
+)
 
 logger = logging.getLogger("zwaf.api.payment_webhook")
 
@@ -145,6 +149,18 @@ async def receive_payment_webhook(
                 )
                 return {"status": "accepted_duplicate"}
 
+            await attach_hosted_checkout_payment_conn(
+                conn,
+                tenant_id=tenant_id,
+                payment_id=payment_id,
+                external_reference=external_reference,
+            )
+            await update_order_customer_from_asaas_conn(
+                conn,
+                tenant_id=tenant_id,
+                payment_id=payment_id,
+                customer_data=_extract_customer_data(payment),
+            )
             await _sync_order_status(conn, tenant_id, payment_id, status)
 
             await _apply_inventory_effects(conn, tenant_id, event, payment_id, status)
@@ -283,6 +299,39 @@ def _amount_to_cents(value: Optional[Any]) -> int:
         return int(round(float(value or 0) * 100))
     except (TypeError, ValueError):
         return 0
+
+
+def _extract_customer_data(payment: dict[str, Any]) -> dict[str, Any]:
+    """Return customer/address fields from known Asaas webhook shapes."""
+    candidates: list[Any] = [
+        payment.get("customerData"),
+        payment.get("customer"),
+        payment.get("billingAddress"),
+    ]
+    merged: dict[str, Any] = {}
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            merged.update({k: v for k, v in candidate.items() if v not in (None, "")})
+
+    for key in (
+        "name",
+        "cpfCnpj",
+        "email",
+        "phone",
+        "mobilePhone",
+        "address",
+        "addressNumber",
+        "complement",
+        "province",
+        "postalCode",
+        "city",
+        "cityName",
+        "state",
+    ):
+        value = payment.get(key)
+        if value not in (None, ""):
+            merged[key] = value
+    return merged
 
 
 def _provider_event_id(body: dict[str, Any], event: str, payment_id: str) -> str:
