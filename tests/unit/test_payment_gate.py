@@ -37,6 +37,39 @@ async def test_guard_blocks_link_without_checkout_data(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_guard_allows_card_without_checkout_data(monkeypatch):
+    calls = []
+
+    def fake_raw_generator(tenant_id, payment_config):
+        async def generate_payment_link(**kwargs):
+            calls.append({"tenant_id": tenant_id, **kwargs})
+            return "Link cartao hospedado"
+
+        return generate_payment_link
+
+    monkeypatch.setattr(
+        "zwaf.conversion.payment_gate.make_payment_link_generator",
+        fake_raw_generator,
+    )
+    generator = make_guarded_payment_link_generator(
+        "livia-raiz-vital",
+        {"products": {"new-woman": {"qty": 1, "price_cents_pix": 14900}}},
+    )
+
+    result = await generator(
+        product_id="new-woman",
+        customer_phone="5511999990001",
+        buying_intent_evidence="quero pagar no cartao",
+        billing_type="CREDIT_CARD",
+        quantity=1,
+    )
+
+    assert result == "Link cartao hospedado"
+    assert calls[0]["billing_type"] == "CREDIT_CARD"
+    assert calls[0]["customer_name"] == ""
+
+
+@pytest.mark.asyncio
 async def test_guard_blocks_alpha_pulse_for_livia():
     generator = make_guarded_payment_link_generator("livia-raiz-vital", {"products": {}})
 

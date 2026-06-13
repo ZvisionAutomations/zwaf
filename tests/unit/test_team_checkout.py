@@ -422,13 +422,17 @@ async def test_asks_payment_method_when_undecided(team):
 
 
 @pytest.mark.asyncio
-async def test_already_signaled_method_skips_question(team):
-    """AC-7: se a cliente ja disse o meio, nao repergunta — vai direto pra coleta."""
+async def test_already_signaled_method_skips_question(team, _mock_pix):
+    """AC-7 + story-048: se a cliente ja disse o meio (cartao) e a quantidade, nao
+    repergunta — vai direto pro checkout HOSPEDADO (sem coletar dados no chat)."""
     t, store = team
     reply = await _signal_handle(t, "quero comprar 2 potes no cartao", "pm2")
-    assert "Nome:" in reply
+    assert reply == "Pix copia e cola: 00020126XYZ"  # gerador (mock) chamado
+    assert "Nome:" not in reply  # cartao nao coleta no chat (vai pro hospedado)
     assert store["pm2"]["checkout"]["billing_type"] == "CREDIT_CARD"
+    assert store["pm2"]["checkout"]["active"] is False
     assert "pending_checkout" not in store["pm2"]
+    assert _mock_pix["billing_type"] == "CREDIT_CARD"
 
 
 @pytest.mark.asyncio
@@ -541,13 +545,14 @@ async def test_quantity_change_during_collection(team, _mock_viacep, _mock_pix):
 
 @pytest.mark.asyncio
 async def test_card_intent_activates_checkout_as_credit_card(team):
-    """'quero pagar no cartao' ativa o checkout com billing_type CREDIT_CARD."""
+    """'quero pagar no cartao' gera link direto sem formulario de dados."""
     t, store = team
     reply = await _signal_handle(t, "quero comprar 2 potes no cartao", "c1")
     assert reply is not None
-    assert "Nome:" in reply  # entrou no formulario de coleta
-    assert "cartao" in reply.lower()  # transicao confirma o meio
-    assert store["c1"]["checkout"]["active"] is True
+    assert "Nome:" not in reply
+    assert "CPF:" not in reply
+    assert "CEP:" not in reply
+    assert store["c1"]["checkout"]["active"] is False
     assert store["c1"]["checkout"]["billing_type"] == "CREDIT_CARD"
 
 
@@ -555,10 +560,12 @@ async def test_card_intent_activates_checkout_as_credit_card(team):
 async def test_card_billing_reaches_generator(team, _mock_viacep, _mock_pix):
     """End-to-end: a escolha de cartao chega ao gerador como CREDIT_CARD."""
     t, store = team
-    await _signal_handle(t, "quero comprar 2 potes no cartao", "c2")
-    reply = await _signal_handle(t, DATA_MSG, "c2")
+    # cartao COM quantidade decidida -> gera o link hospedado direto (sem coletar dados)
+    reply = await _signal_handle(t, "quero comprar 2 potes no cartao", "c2")
     assert reply == "Pix copia e cola: 00020126XYZ"  # gerador mockado
     assert _mock_pix["billing_type"] == "CREDIT_CARD"
+    assert _mock_pix["customer_name"] == ""
+    assert _mock_pix["customer_document"] == ""
     assert store["c2"]["checkout"]["active"] is False
 
 
@@ -576,25 +583,28 @@ async def test_billing_switch_to_card_during_collection(team, _mock_viacep, _moc
     """Cliente comeca no Pix e troca para cartao no meio — respeita a ultima escolha."""
     t, store = team
     await _signal_handle(t, "quero comprar 2 potes, pode mandar o pix", "c4")
-    # ainda coletando, cliente muda de ideia junto com parte dos dados
-    await _signal_handle(t, "na verdade quero no cartao\nNome: Maria Silva", "c4")
+    # ainda coletando (Pix), cliente troca para cartao -> vai pro checkout hospedado
+    reply = await _signal_handle(t, "na verdade quero no cartao\nNome: Maria Silva", "c4")
     assert store["c4"]["checkout"]["billing_type"] == "CREDIT_CARD"
-    reply = await _signal_handle(t, "CPF: 529.982.247-25\nCEP: 01001-000\nNumero: 930", "c4")
+    assert store["c4"]["checkout"]["active"] is False
     assert reply == "Pix copia e cola: 00020126XYZ"
     assert _mock_pix["billing_type"] == "CREDIT_CARD"
+    assert _mock_pix["customer_name"] == ""
 
 
 @pytest.mark.asyncio
-async def test_card_preference_persisted_before_trigger(team):
-    """'prefiro cartao' antes do gatilho e lembrado quando o checkout ativa."""
+async def test_card_preference_persisted_before_trigger(team, _mock_pix):
+    """'prefiro cartao' antes do gatilho e lembrado; como falta a quantidade, o gate
+    pergunta 2-vs-1 e lembra o meio (cartao). A resposta ativa o checkout hospedado
+    (story-042/046/048)."""
     t, store = team
-    # "pagar no cartao" ja e intencao de compra (story-042); como falta a quantidade,
-    # o gate pergunta 2-vs-1 e lembra o meio (cartao). A resposta ativa a coleta.
     await _signal_handle(t, "prefiro pagar no cartao", "c5")
     reply = await _signal_handle(t, "2 potes", "c5")
     assert store["c5"]["checkout"]["billing_type"] == "CREDIT_CARD"
     assert store["c5"]["checkout"]["quantity"] == 2
-    assert "Nome:" in reply
+    assert reply == "Pix copia e cola: 00020126XYZ"  # cartao -> link hospedado (mock)
+    assert "Nome:" not in reply
+    assert _mock_pix["billing_type"] == "CREDIT_CARD"
 
 
 @pytest.mark.asyncio

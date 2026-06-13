@@ -182,6 +182,10 @@ def test_payment_paid_event_marks_order_paid(monkeypatch):
                 return "INSERT 0 1"
             return "UPDATE 1"
 
+        async def fetchval(self, query, *args):
+            self.calls.append(query)
+            return None
+
         async def close(self):
             return None
 
@@ -236,6 +240,14 @@ class FakeTxConnection:
         if "INSERT INTO payment_events" in query:
             return "INSERT 0 1"
         return "UPDATE 1"
+
+    async def fetchval(self, query, *args):
+        self.calls.append(query)
+        return None
+
+    async def fetchrow(self, query, *args):
+        self.calls.append(query)
+        return None
 
     def transaction(self):
         return _Tx(self)
@@ -352,3 +364,57 @@ def test_duplicate_paid_event_does_not_confirm_inventory_twice(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {"status": "accepted_duplicate"}
     assert confirms == []  # idempotency guard prevented a second stock confirmation
+
+
+def test_card_payment_webhook_reconciles_hosted_checkout_customer(monkeypatch):
+    client = _client(monkeypatch)
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://zwaf:test@postgres:5432/zwaf")
+    seen = {}
+
+    async def fake_attach(conn, *, tenant_id, payment_id, external_reference):
+        seen["attach"] = (tenant_id, payment_id, external_reference)
+        return "order-123"
+
+    async def fake_update(conn, *, tenant_id, payment_id, customer_data):
+        seen["customer"] = (tenant_id, payment_id, customer_data)
+        return True
+
+    async def fake_confirm(conn, *, tenant_id, payment_id):
+        seen["confirm"] = (tenant_id, payment_id)
+        return "confirmed"
+
+    monkeypatch.setattr(payment_webhook, "attach_hosted_checkout_payment_conn", fake_attach)
+    monkeypatch.setattr(payment_webhook, "update_order_customer_from_asaas_conn", fake_update)
+    monkeypatch.setattr(payment_webhook, "confirm_sale_for_payment_conn", fake_confirm)
+    _wire_db(monkeypatch)
+
+    response = client.post(
+        "/payment/livia-raiz-vital",
+        headers={"asaas-access-token": "webhook-token"},
+        json={
+            "id": "evt_card_paid",
+            "event": "PAYMENT_CONFIRMED",
+            "payment": {
+                "id": "pay_card_123",
+                "value": 163.90,
+                "externalReference": "livia-raiz-vital:5511999990001:new-woman:nw-001",
+                "customerData": {
+                    "name": "Cliente Teste",
+                    "cpfCnpj": "52998224725",
+                    "postalCode": "01001000",
+                    "address": "Praca da Se",
+                    "addressNumber": "100",
+                    "province": "Se",
+                    "cityName": "Sao Paulo",
+                    "state": "SP",
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    assert seen["attach"][1] == "pay_card_123"
+    assert seen["customer"][2]["name"] == "Cliente Teste"
+    assert seen["customer"][2]["postalCode"] == "01001000"
+    assert seen["confirm"] == ("livia-raiz-vital", "pay_card_123")

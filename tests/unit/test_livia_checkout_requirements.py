@@ -46,6 +46,19 @@ def test_checkout_accepts_complete_new_woman_order():
     assert result.ok is True
 
 
+def test_card_checkout_allows_missing_customer_data_in_chat():
+    result = validate_checkout_ready(
+        tenant_id="livia-raiz-vital",
+        product_id="new-woman-1",
+        customer_name="",
+        customer_document="",
+        delivery_address={},
+        billing_type="CREDIT_CARD",
+    )
+
+    assert result.ok is True
+
+
 def test_checkout_rejects_invalid_document_checksum():
     result = validate_checkout_ready(
         tenant_id="livia-raiz-vital",

@@ -196,6 +196,161 @@ async def mark_order_payment_failed(*, order_id: str) -> None:
         logger.error("order payment failure update failed: %s", exc)
 
 
+async def attach_hosted_checkout_payment_conn(
+    conn: Any,
+    *,
+    tenant_id: str,
+    payment_id: str,
+    external_reference: str,
+) -> str:
+    """Attach the real Asaas payment id to a card order created via Checkout.
+
+    The card flow initially stores the Asaas checkout session id in
+    ``orders.asaas_payment_id``. Payment webhooks later arrive with the concrete
+    charge id, so reconciliation falls back to the stable external reference.
+    """
+    if not payment_id or not external_reference:
+        return ""
+    parts = external_reference.split(":")
+    if len(parts) < 4 or parts[0] != tenant_id:
+        return ""
+    lead_phone, product_id, sku = parts[1], parts[2], parts[3]
+    order_id = await conn.fetchval(
+        """
+        WITH matched AS (
+            SELECT id
+            FROM orders
+            WHERE tenant_id = $1
+              AND lead_phone = $3
+              AND product_id = $4
+              AND sku = $5
+              AND billing_type = 'CREDIT_CARD'
+            ORDER BY created_at DESC
+            LIMIT 1
+        )
+        UPDATE orders o
+        SET asaas_payment_id = $2, updated_at = NOW()
+        FROM matched
+        WHERE o.id = matched.id
+          AND o.status <> 'paid'
+        RETURNING o.id
+        """,
+        tenant_id,
+        payment_id,
+        lead_phone,
+        product_id,
+        sku,
+    )
+    return str(order_id or "")
+
+
+async def update_order_customer_from_asaas_conn(
+    conn: Any,
+    *,
+    tenant_id: str,
+    payment_id: str,
+    customer_data: dict[str, Any],
+) -> bool:
+    """Persist hosted-checkout customer data from Asaas using encrypted fields."""
+    if not payment_id or not customer_data:
+        return False
+    if not can_encrypt_pii():
+        logger.error("Cannot persist hosted checkout PII without ZWAF_PII_FERNET_KEY")
+        return False
+
+    order = await conn.fetchrow(
+        """
+        SELECT id, lead_phone
+        FROM orders
+        WHERE tenant_id = $1 AND asaas_payment_id = $2
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        tenant_id,
+        payment_id,
+    )
+    if not order:
+        return False
+
+    name = str(customer_data.get("name") or "").strip()
+    document = str(customer_data.get("cpfCnpj") or customer_data.get("cpf_cnpj") or "").strip()
+    if name or document:
+        await conn.execute(
+            """
+            INSERT INTO lead_profiles (
+                tenant_id, phone, full_name_encrypted, document_encrypted,
+                document_hash, document_last4, document_type, contact_status,
+                updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', NOW())
+            ON CONFLICT (tenant_id, phone) DO UPDATE SET
+                full_name_encrypted = COALESCE(EXCLUDED.full_name_encrypted, lead_profiles.full_name_encrypted),
+                document_encrypted = COALESCE(EXCLUDED.document_encrypted, lead_profiles.document_encrypted),
+                document_hash = COALESCE(EXCLUDED.document_hash, lead_profiles.document_hash),
+                document_last4 = COALESCE(EXCLUDED.document_last4, lead_profiles.document_last4),
+                document_type = COALESCE(EXCLUDED.document_type, lead_profiles.document_type),
+                updated_at = NOW()
+            """,
+            tenant_id,
+            order["lead_phone"],
+            encrypt_pii(name) if name else None,
+            encrypt_pii(document) if document else None,
+            hash_pii(document, tenant_id) if document else None,
+            document_last4(document) if document else None,
+            document_type(document) if document else None,
+        )
+
+    address = _asaas_customer_address(customer_data)
+    if any(address.values()) or name:
+        await conn.execute(
+            """
+            INSERT INTO order_delivery_addresses (
+                order_id, recipient_name_encrypted, postal_code_encrypted,
+                street_encrypted, number_encrypted, complement_encrypted,
+                district_encrypted, city_encrypted, state_encrypted, address_hash
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (order_id) DO UPDATE SET
+                recipient_name_encrypted = COALESCE(EXCLUDED.recipient_name_encrypted, order_delivery_addresses.recipient_name_encrypted),
+                postal_code_encrypted = COALESCE(EXCLUDED.postal_code_encrypted, order_delivery_addresses.postal_code_encrypted),
+                street_encrypted = COALESCE(EXCLUDED.street_encrypted, order_delivery_addresses.street_encrypted),
+                number_encrypted = COALESCE(EXCLUDED.number_encrypted, order_delivery_addresses.number_encrypted),
+                complement_encrypted = COALESCE(EXCLUDED.complement_encrypted, order_delivery_addresses.complement_encrypted),
+                district_encrypted = COALESCE(EXCLUDED.district_encrypted, order_delivery_addresses.district_encrypted),
+                city_encrypted = COALESCE(EXCLUDED.city_encrypted, order_delivery_addresses.city_encrypted),
+                state_encrypted = COALESCE(EXCLUDED.state_encrypted, order_delivery_addresses.state_encrypted),
+                address_hash = COALESCE(EXCLUDED.address_hash, order_delivery_addresses.address_hash),
+                updated_at = NOW()
+            """,
+            order["id"],
+            encrypt_pii(name) if name else None,
+            encrypt_pii(address["postal_code"]) if address["postal_code"] else None,
+            encrypt_pii(address["street"]) if address["street"] else None,
+            encrypt_pii(address["number"]) if address["number"] else None,
+            encrypt_pii(address["complement"]) if address["complement"] else None,
+            encrypt_pii(address["district"]) if address["district"] else None,
+            encrypt_pii(address["city"]) if address["city"] else None,
+            encrypt_pii(address["state"]) if address["state"] else None,
+            hash_pii("|".join(address.get(field, "") for field in sorted(address)), tenant_id)
+            if any(address.values())
+            else None,
+        )
+    return True
+
+
+def _asaas_customer_address(customer_data: dict[str, Any]) -> dict[str, str]:
+    address = {
+        "postal_code": customer_data.get("postalCode") or customer_data.get("postal_code") or "",
+        "street": customer_data.get("address") or customer_data.get("street") or "",
+        "number": customer_data.get("addressNumber") or customer_data.get("number") or "",
+        "complement": customer_data.get("complement") or "",
+        "district": customer_data.get("province") or customer_data.get("district") or "",
+        "city": customer_data.get("cityName") or customer_data.get("city") or "",
+        "state": customer_data.get("state") or "",
+    }
+    return normalize_delivery_address(address)
+
+
 async def get_order_shipping_context(*, order_id: str) -> dict[str, Any]:
     db_url = _db_url()
     if not db_url or not order_id:
