@@ -4,8 +4,8 @@ from __future__ import annotations
 import logging
 import os
 import json
-from datetime import datetime, timedelta, timezone
-from typing import Any
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Optional
 from uuid import uuid4
 
 from zwaf.conversion.checkout_policy import normalize_delivery_address
@@ -142,6 +142,7 @@ async def mark_order_payment_created(
     asaas_customer_id: str,
     asaas_payment_id: str,
     payment_url: str,
+    pix_due_date: Optional[date] = None,
 ) -> None:
     db_url = _db_url()
     if not db_url or not order_id:
@@ -158,6 +159,7 @@ async def mark_order_payment_created(
                     asaas_customer_id = $2,
                     asaas_payment_id = $3,
                     asaas_payment_url = $4,
+                    pix_due_date = COALESCE($5::date, pix_due_date),
                     updated_at = NOW()
                 WHERE id = $1
                 """,
@@ -165,6 +167,7 @@ async def mark_order_payment_created(
                 asaas_customer_id,
                 asaas_payment_id,
                 payment_url,
+                pix_due_date,
             )
         finally:
             await conn.close()

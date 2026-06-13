@@ -20,6 +20,7 @@ from zwaf.api.routes import health, webhook, payment_webhook, superfrete_webhook
 from zwaf.core.team import build_team
 from zwaf.core.tenant import TenantConfig, TenantLoadError
 from zwaf.reporting.error_handler import notify_critical_error, setup_critical_error_handler
+from zwaf.reporting.pix_reengagement_scheduler import register_pix_reengagement_scheduler
 from zwaf.reporting.scheduler import register_daily_report_scheduler
 
 logger = logging.getLogger("zwaf.api")
@@ -79,6 +80,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             tenant_id=tenant_id,
             whatsapp_tool=whatsapp_tool,
         )
+        register_pix_reengagement_scheduler(
+            agno_app=app,
+            db_url=db_url,
+            tenant_id=tenant_id,
+            whatsapp_tool=whatsapp_tool,
+        )
 
     setup_critical_error_handler(critical_whatsapp_tool)
     app.state.critical_error_whatsapp_tool = critical_whatsapp_tool
@@ -118,6 +125,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             scheduler = getattr(team, "_lead_memory_retention_scheduler", None)
             if scheduler:
                 scheduler.stop()
+        except Exception:
+            pass
+
+    # Shutdown: parar schedulers de re-engajamento PIX (story-051)
+    for scheduler in getattr(app.state, "pix_reengagement_schedulers", []):
+        try:
+            if scheduler.running:
+                scheduler.shutdown(wait=False)
         except Exception:
             pass
 

@@ -221,11 +221,13 @@ def make_payment_link_generator(
                         logger.error("Asaas pixQrCode fetch failed: %s", exc)
                         payload = ""
                     if payload:
+                        _pix_due_date = date.today() + timedelta(days=max(0, int(cfg.get("due_days", 2))))
                         await mark_order_payment_created(
                             order_id=order_id,
                             asaas_customer_id=customer_id,
                             asaas_payment_id=payment_id,
                             payment_url=_extract_payment_url(data),
+                            pix_due_date=_pix_due_date,
                         )
                         return _pix_message(payload, price_cents)
                     logger.error("Asaas returned no Pix payload for payment %s", payment_id)
