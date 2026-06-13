@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import unicodedata
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
@@ -26,7 +27,13 @@ from zwaf.memory.session import (
     set_session_state,
 )
 from zwaf.security.pii import can_encrypt_pii, decrypt_pii, encrypt_pii
-from zwaf.tools.payment import MESSAGE_SPLIT
+from zwaf.tools.payment import (
+    MESSAGE_SPLIT,
+    _format_brl,
+    _resolve_product_and_qty,
+    _tier_unit_cents,
+    _total_cents,
+)
 from zwaf.tools.whatsapp import WhatsAppTool
 
 logger = logging.getLogger("zwaf.core.team")
@@ -53,8 +60,30 @@ CHECKOUT_SENSITIVE_FIELDS = {
     "state",
 }
 
-# Quantidade de potes/unidades extraida da mensagem-gatilho ("quero 3 potes").
-_QUANTITY_RE = re.compile(r"(\d+)\s*(?:potes?|unidades?|frascos?|caixas?|pote)", re.IGNORECASE)
+# Quantidade de potes/unidades (story-046). Dois caminhos SEGUROS de deteccao:
+#  (1) numero + substantivo de unidade ("3 potes", "dois frascos") — inequivoco;
+#  (2) numero colado a um verbo de compra ("quero 2", "vou levar dois") — guardado
+#      contra parcelamento ("2 vezes"/"2x") e contra numeros de outros campos (CEP,
+#      numero da casa, CPF, "faz 2 anos"), que nunca trazem verbo/unidade colado.
+_SPELLED_NUMBERS = {
+    "um": 1, "uma": 1, "dois": 2, "duas": 2, "tres": 3, "quatro": 4, "cinco": 5,
+    "seis": 6, "sete": 7, "oito": 8, "nove": 9, "dez": 10,
+}
+_NUM_TOKEN = r"\d+|um|uma|dois|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez"
+_QTY_UNIT_RE = re.compile(
+    rf"\b({_NUM_TOKEN})\s*(?:potes?|pote|unidades?|frascos?|caixas?|kits?|vidros?)\b",
+    re.IGNORECASE,
+)
+_QTY_BUY_RE = re.compile(
+    rf"\b(?:quero|queria|vou\s+querer|vou\s+levar|lev(?:ar|o|a)|manda(?:r)?|mande|"
+    rf"me\s+v[eê]|pega(?:r)?|coloca(?:r)?|p[oõ]e)\s+"
+    rf"(?:mais\s+|s[oó]\s+|uns\s+|umas\s+)?({_NUM_TOKEN})\b"
+    rf"(?!\s*(?:vez(?:es)?|x|%|por\s*cento|ano|anos|m[eê]s|meses|dia|dias))",
+    re.IGNORECASE,
+)
+# Numero solto (digito ou por extenso) — usado SO ao ler a resposta a pergunta de
+# quantidade, onde o contexto ja e "quantos potes?".
+_NUM_TOKEN_RE = re.compile(rf"\b({_NUM_TOKEN})\b", re.IGNORECASE)
 
 # Story-042: deteccao deterministica do meio de pagamento na mensagem do cliente.
 # Cartao/parcelar -> CREDIT_CARD; pix -> PIX. Default e PIX (maior conversao).
@@ -540,6 +569,18 @@ class ZWAFTeam:
                 checkout=checkout,
             )
 
+        # Story-046: se ha uma pergunta de quantidade/meio pendente (gate pre-coleta),
+        # a resposta do cliente e processada aqui antes de qualquer outra coisa.
+        if state.get("pending_checkout"):
+            resolved = await self._advance_precheckout(
+                message=message,
+                session_id=session_id,
+                state=state,
+                pending=dict(state["pending_checkout"]),
+            )
+            if resolved is not None:
+                return resolved
+
         # HIGH-2 (story-041): lembrar a ultima quantidade mencionada ANTES de o
         # checkout ativar. O cliente costuma dizer "quero 3 potes" e so depois
         # "pode mandar o pix" (mensagem-gatilho sem quantidade) — sem isso a qty
@@ -558,24 +599,22 @@ class ZWAFTeam:
                 state["last_billing_type"] = mentioned_billing
                 await _save_session_state(session_id, self._tenant.tenant_id, state)
 
-        # Nao ativo: inicia a coleta apenas quando ha intencao de compra explicita
-        # (mesma regra deterministica que hoje libera o link).
+        # Nao ativo: inicia a coleta apenas quando ha intencao de compra explicita.
+        # Story-046: se a quantidade NAO foi decidida, ancora 2-vs-1 antes de assumir
+        # 1; se o meio NAO foi escolhido, pergunta "cartao ou Pix?" — tudo antes da
+        # coleta de dados. Se ambos ja estao decididos, vai direto para a coleta.
         if signal.should_send_payment_link:
-            quantity = mentioned_qty or int(state.get("last_quantity", 1) or 1)
-            billing_type = (
-                mentioned_billing or state.get("last_billing_type") or "PIX"
+            quantity = (
+                mentioned_qty if mentioned_qty is not None else state.get("last_quantity")
             )
-            checkout = {
-                "active": True,
-                "product_id": self._default_product_id(signal.product_hint),
-                "billing_type": billing_type,
-                "quantity": quantity,
-                "fields": {},
-                "attempts": 0,
-            }
-            state["checkout"] = checkout
-            await _save_session_state(session_id, self._tenant.tenant_id, state)
-            return build_transition_message(quantity, billing_type)
+            billing_type = mentioned_billing or state.get("last_billing_type")
+            return await self._begin_checkout_or_prompt(
+                session_id=session_id,
+                state=state,
+                quantity=quantity,
+                billing_type=billing_type,
+                product_hint=signal.product_hint,
+            )
 
         return None
 
@@ -647,11 +686,22 @@ class ZWAFTeam:
         if switched_billing is not None:
             checkout["billing_type"] = switched_billing
 
-        # Bug-fix: se o cliente corrigir a quantidade durante a coleta ("mas quero
-        # 2 potes"), atualiza — antes a mudanca era ignorada e cobrava a qty antiga.
+        # Story-046: se o cliente corrigir a quantidade durante a coleta ("quero 2"),
+        # atualiza, RE-CONFIRMA o novo total e NAO gera neste turno — fecha a janela
+        # em que a qty/valor antigo seria cobrado em silencio (caso Loma). Os dados
+        # desta mensagem ainda sao aproveitados para nao perder nada.
         switched_qty = _quantity_in_message(message)
-        if switched_qty is not None:
+        current_qty = int(checkout.get("quantity", 1) or 1)
+        if switched_qty is not None and switched_qty != current_qty:
             checkout["quantity"] = switched_qty
+            turn = await advance_checkout(message, checkout.get("fields", {}))
+            checkout["fields"] = turn.collected
+            state["checkout"] = checkout
+            await _save_session_state(session_id, self._tenant.tenant_id, state)
+            confirm = self._reconfirm_total_message(checkout)
+            if turn.ready:
+                return f"{confirm} Me confirma que eu ja te mando o link."
+            return f"{confirm}\n\n{turn.reply}" if turn.reply else confirm
 
         turn = await advance_checkout(message, checkout.get("fields", {}))
         checkout["fields"] = turn.collected
@@ -758,20 +808,206 @@ class ZWAFTeam:
             return next(iter(products))
         return "new-woman"
 
+    # ─── Pre-checkout: ancora de quantidade + escolha de meio (story-046) ──
+
+    async def _begin_checkout_or_prompt(
+        self,
+        *,
+        session_id: str,
+        state: dict,
+        quantity: Optional[int],
+        billing_type: Optional[str],
+        product_hint: Optional[str],
+    ) -> str:
+        """Decide o passo antes da coleta: sem quantidade, ancora 2-vs-1; sem meio,
+        pergunta cartao/Pix; com ambos decididos, inicia a coleta deterministica."""
+        if quantity is None:
+            state["pending_checkout"] = {
+                "stage": "quantity",
+                "billing_type": billing_type or "",
+                "product_hint": product_hint or "",
+            }
+            await _save_session_state(session_id, self._tenant.tenant_id, state)
+            return self._anchor_quantity_message(product_hint)
+        if billing_type is None:
+            state["pending_checkout"] = {
+                "stage": "billing",
+                "quantity": int(quantity),
+                "product_hint": product_hint or "",
+            }
+            await _save_session_state(session_id, self._tenant.tenant_id, state)
+            return self._billing_question_message()
+        return await self._start_checkout(
+            session_id=session_id,
+            state=state,
+            quantity=int(quantity),
+            billing_type=billing_type,
+            product_hint=product_hint,
+        )
+
+    async def _advance_precheckout(
+        self,
+        *,
+        message: str,
+        session_id: str,
+        state: dict,
+        pending: dict,
+    ) -> Optional[str]:
+        """Processa a resposta a uma pergunta pendente de quantidade/meio (story-046).
+
+        Retorna a proxima mensagem (proxima pergunta ou transicao de coleta), ou None
+        para largar o gate e deixar a Livia (LLM) conduzir quando a resposta nao for
+        reconhecida como quantidade.
+        """
+        stage = pending.get("stage")
+        if stage == "quantity":
+            qty = _read_quantity_answer(message)
+            if qty is None:
+                state.pop("pending_checkout", None)
+                await _save_session_state(session_id, self._tenant.tenant_id, state)
+                return None
+            billing = pending.get("billing_type") or _detect_billing_type(message)
+            return await self._begin_checkout_or_prompt(
+                session_id=session_id,
+                state=state,
+                quantity=qty,
+                billing_type=billing or None,
+                product_hint=pending.get("product_hint"),
+            )
+        if stage == "billing":
+            # Default PIX quando a resposta nao deixa claro (maior conversao); nunca
+            # trava a venda por causa da escolha do meio.
+            billing = _detect_billing_type(message) or "PIX"
+            return await self._start_checkout(
+                session_id=session_id,
+                state=state,
+                quantity=int(pending.get("quantity", 1) or 1),
+                billing_type=billing,
+                product_hint=pending.get("product_hint"),
+            )
+        state.pop("pending_checkout", None)
+        await _save_session_state(session_id, self._tenant.tenant_id, state)
+        return None
+
+    async def _start_checkout(
+        self,
+        *,
+        session_id: str,
+        state: dict,
+        quantity: int,
+        billing_type: str,
+        product_hint: Optional[str],
+    ) -> str:
+        """Ativa o modo de coleta com a quantidade e o meio ja decididos."""
+        checkout = {
+            "active": True,
+            "product_id": self._default_product_id(product_hint),
+            "billing_type": billing_type,
+            "quantity": max(1, int(quantity or 1)),
+            "fields": {},
+            "attempts": 0,
+        }
+        state["checkout"] = checkout
+        state.pop("pending_checkout", None)
+        await _save_session_state(session_id, self._tenant.tenant_id, state)
+        return build_transition_message(checkout["quantity"], billing_type)
+
+    def _tenant_products(self) -> dict:
+        return (getattr(self._tenant, "payment", None) or {}).get("products", {})
+
+    def _anchor_quantity_message(self, product_hint: Optional[str]) -> str:
+        """Ancora 2-vs-1 com a economia real do tenant (story-028 e a fonte do preco)."""
+        products = self._tenant_products()
+        pid = self._default_product_id(product_hint)
+        cfg, _ = _resolve_product_and_qty(products, pid, 1)
+        tiers = cfg.get("unit_price_tiers_pix_cents") or []
+        unit1 = _tier_unit_cents(tiers, 1)
+        unit2 = _tier_unit_cents(tiers, 2)
+        total2 = _total_cents(cfg, 2, "PIX")
+        if unit1 and unit2 and total2:
+            return (
+                "Posso te mandar o link! Pelo que a gente conversou, o ideal e o ciclo "
+                f"completo: 2 potes saem {_format_brl(unit2)} cada ({_format_brl(total2)} "
+                f"no total, frete gratis), em vez de {_format_brl(unit1)} no pote avulso. "
+                "Mas da pra comecar com 1 se voce preferir sentir como seu corpo responde. "
+                "Quer fechar os 2 ou comecar com 1?"
+            )
+        return (
+            "Posso te mandar o link! A maioria comeca com o ciclo completo de 2 potes "
+            "(sai mais em conta por pote e com frete gratis), mas da pra comecar com 1 "
+            "tambem. Quer fechar os 2 ou comecar com 1?"
+        )
+
+    def _billing_question_message(self) -> str:
+        return (
+            "Perfeito! E qual a melhor forma pra voce: cartao de credito ou Pix? "
+            "(No Pix o valor e o melhor; no cartao da pra parcelar.)"
+        )
+
+    def _reconfirm_total_message(self, checkout: dict) -> str:
+        qty = int(checkout.get("quantity", 1) or 1)
+        unidade = "pote" if qty == 1 else "potes"
+        meio = "no cartao" if checkout.get("billing_type") == "CREDIT_CARD" else "no Pix"
+        total = self._order_total_cents(checkout)
+        if total:
+            return f"Anotado! Fechamos {qty} {unidade} = {_format_brl(total)} {meio}."
+        return f"Anotado, {qty} {unidade}!"
+
+    def _order_total_cents(self, checkout: dict) -> Optional[int]:
+        products = self._tenant_products()
+        cfg, qty = _resolve_product_and_qty(
+            products, checkout.get("product_id", ""), int(checkout.get("quantity", 1) or 1)
+        )
+        return _total_cents(cfg, qty, checkout.get("billing_type", "PIX"))
+
+
+def _coerce_qty_token(token: str) -> Optional[int]:
+    """Converte um token de quantidade (digito ou por extenso) para int 1-99, ou None."""
+    token = (token or "").strip().lower()
+    if token.isdigit():
+        n = int(token)
+        return n if 1 <= n <= 99 else None
+    # Normaliza acentos para casar "tres"/"tres"-com-acento (story-046 MED-1):
+    # o regex aceita "tr[eê]s", entao o lookup precisa cobrir a forma acentuada.
+    norm = "".join(
+        c for c in unicodedata.normalize("NFD", token)
+        if unicodedata.category(c) != "Mn"
+    )
+    return _SPELLED_NUMBERS.get(token) or _SPELLED_NUMBERS.get(norm)
+
 
 def _quantity_in_message(message: str) -> Optional[int]:
-    """Quantidade de potes/unidades explicita na mensagem, ou None se ausente.
+    """Quantidade de potes explicita na mensagem, ou None se ausente (story-041/046).
 
-    Distingue "nao mencionou quantidade" (None) de "mencionou 1" — essencial para
-    o HIGH-2: so sobrescreve a quantidade lembrada quando o cliente realmente
-    informa um numero.
+    So reconhece quando o numero vem colado a um substantivo de unidade ("3 potes")
+    ou a um verbo de compra ("quero 2", "vou levar dois"). Numeros de outros campos
+    (CEP, numero da casa, CPF) ou de duracao/parcelamento ("faz 2 anos", "em 2 vezes")
+    NAO viram quantidade — protege o caminho de receita (guard story-046).
     """
-    match = _QUANTITY_RE.search(message or "")
-    if match:
-        try:
-            return max(1, int(match.group(1)))
-        except (TypeError, ValueError):
-            return None
+    text = message or ""
+    m = _QTY_UNIT_RE.search(text)
+    if m:
+        return _coerce_qty_token(m.group(1))
+    m = _QTY_BUY_RE.search(text)
+    if m:
+        return _coerce_qty_token(m.group(1))
+    return None
+
+
+def _read_quantity_answer(message: str) -> Optional[int]:
+    """Le a resposta a pergunta de quantidade (story-046), mais permissiva que
+    `_quantity_in_message` porque o contexto JA e 'quantos potes?'. Aceita numero
+    solto ("2", "dois"), o ciclo completo ("completo", "os dois") e a opcao de
+    comecar com 1. Retorna None se nada confiavel for lido (cai para o LLM)."""
+    text = (message or "").strip().lower()
+    q = _quantity_in_message(text)
+    if q is not None:
+        return q
+    if re.search(r"\b(complet[oa]|ciclo|os\s+dois|as\s+duas|ambos)\b", text):
+        return 2
+    m = _NUM_TOKEN_RE.search(text)
+    if m:
+        return _coerce_qty_token(m.group(1))
     return None
 
 
