@@ -90,7 +90,7 @@ async def _signal_handle(t, message, session_id):
 @pytest.mark.asyncio
 async def test_activates_on_buying_intent(team):
     t, store = team
-    reply = await _signal_handle(t, "quero o pix", "s1")
+    reply = await _signal_handle(t, "quero comprar 2 potes, pode mandar o pix", "s1")
     assert "Nome:" in reply and "CEP:" in reply  # mensagem de transicao rotulada
     assert store["s1"]["checkout"]["active"] is True
     assert store["s1"]["checkout"]["product_id"] == "new-woman"
@@ -113,7 +113,7 @@ async def test_extracts_quantity_from_trigger(team):
 @pytest.mark.asyncio
 async def test_full_collection_generates_pix(team, _mock_viacep, _mock_pix):
     t, store = team
-    await _signal_handle(t, "quero o pix", "s4")
+    await _signal_handle(t, "quero comprar 2 potes, pode mandar o pix", "s4")
     reply = await _signal_handle(t, DATA_MSG, "s4")
     assert reply == "Pix copia e cola: 00020126XYZ"
     assert store["s4"]["checkout"]["active"] is False
@@ -134,7 +134,7 @@ async def test_checkout_fields_are_encrypted_in_session_and_decrypted_for_pix(
     monkeypatch.setenv("ZWAF_PII_FERNET_KEY", Fernet.generate_key().decode())
     t, store = team
 
-    await _signal_handle(t, "quero o pix", "pii1")
+    await _signal_handle(t, "quero comprar 2 potes, pode mandar o pix", "pii1")
     reply = await _signal_handle(t, PARTIAL_DATA_MSG, "pii1")
 
     assert "numero da casa" in reply
@@ -154,7 +154,7 @@ async def test_checkout_fields_are_encrypted_in_session_and_decrypted_for_pix(
 @pytest.mark.asyncio
 async def test_never_reasks_valid_field_across_turns(team, _mock_viacep, _mock_pix):
     t, store = team
-    await _signal_handle(t, "quero o pix", "s5")
+    await _signal_handle(t, "quero comprar 2 potes, pode mandar o pix", "s5")
     # 1o turno: faltou o numero
     r1 = await _signal_handle(t, "Nome: Maria Silva\nCPF: 529.982.247-25\nCEP: 01001-000", "s5")
     assert "numero da casa" in r1
@@ -168,7 +168,7 @@ async def test_never_reasks_valid_field_across_turns(team, _mock_viacep, _mock_p
 async def test_double_send_does_not_regenerate(team, _mock_viacep, _mock_pix):
     """NFR-5: reenviar os mesmos dados nao gera um segundo Pix (checkout encerrado)."""
     t, store = team
-    await _signal_handle(t, "quero o pix", "s7")
+    await _signal_handle(t, "quero comprar 2 potes, pode mandar o pix", "s7")
     r1 = await _signal_handle(t, DATA_MSG, "s7")
     assert r1 == "Pix copia e cola: 00020126XYZ"
     assert store["s7"]["checkout"]["active"] is False
@@ -209,7 +209,7 @@ async def test_concurrent_checkout_finalization_generates_single_pix(
     monkeypatch.setattr(team_module, "release_session_lock", fake_release)
     monkeypatch.setattr("zwaf.tools.payment.make_payment_link_generator", fake_make_generator)
 
-    await _signal_handle(t, "quero o pix", "lock1")
+    await _signal_handle(t, "quero comprar 2 potes, pode mandar o pix", "lock1")
     first = asyncio.create_task(_signal_handle(t, DATA_MSG, "lock1"))
     await first_started.wait()
     second = asyncio.create_task(_signal_handle(t, DATA_MSG, "lock1"))
@@ -227,7 +227,7 @@ async def test_concurrent_checkout_finalization_generates_single_pix(
 @pytest.mark.asyncio
 async def test_safety_net_gives_up_after_max_attempts(team):
     t, store = team
-    await _signal_handle(t, "quero o pix", "s6")
+    await _signal_handle(t, "quero comprar 2 potes, pode mandar o pix", "s6")
     last = ""
     for _ in range(team_module.MAX_CHECKOUT_ATTEMPTS):
         last = await _signal_handle(t, "nao entendi", "s6")
@@ -258,7 +258,7 @@ def _mock_escalation(monkeypatch):
 async def test_health_risk_during_checkout_escalates(team, _mock_escalation):
     """HIGH-1: 'passando mal' no meio da coleta sai do checkout e escala."""
     t, store = team
-    await _signal_handle(t, "quero o pix", "h1")
+    await _signal_handle(t, "quero comprar 2 potes, pode mandar o pix", "h1")
     assert store["h1"]["checkout"]["active"] is True
     reply = await _signal_handle(t, "estou passando mal depois de tomar", "h1")
     assert "Fernando" in reply
@@ -271,7 +271,7 @@ async def test_health_risk_during_checkout_escalates(team, _mock_escalation):
 async def test_critical_complaint_during_checkout_escalates(team, _mock_escalation):
     """HIGH-1: reclamacao grave (golpe/procon) durante a coleta escala."""
     t, store = team
-    await _signal_handle(t, "quero o pix", "h2")
+    await _signal_handle(t, "quero comprar 2 potes, pode mandar o pix", "h2")
     reply = await _signal_handle(t, "isso e um golpe, vou no procon", "h2")
     assert "Fernando" in reply
     assert store["h2"]["checkout"]["active"] is False
@@ -282,7 +282,7 @@ async def test_critical_complaint_during_checkout_escalates(team, _mock_escalati
 async def test_valid_data_during_checkout_does_not_escalate(team, _mock_viacep, _mock_pix, _mock_escalation):
     """Regressao: dados do formulario nunca casam padroes criticos — sem escala."""
     t, store = team
-    await _signal_handle(t, "quero o pix", "h3")
+    await _signal_handle(t, "quero comprar 2 potes, pode mandar o pix", "h3")
     reply = await _signal_handle(t, DATA_MSG, "h3")
     assert reply == "Pix copia e cola: 00020126XYZ"
     assert not _mock_escalation  # nao escalou — seguiu o checkout normal
@@ -322,6 +322,128 @@ async def test_quantity_in_trigger_overrides_persisted(team):
     reply = await _signal_handle(t, "quero comprar 5 potes, pode mandar o pix", "q3")
     assert store["q3"]["checkout"]["quantity"] == 5
     assert "5 potes" in reply
+
+
+# ─── Story-046: ancora 2-vs-1, captura robusta de quantidade e escolha de meio ──
+
+
+class TieredTenant:
+    tenant_id = TENANT
+    payment = {
+        "products": {
+            "new-woman": {
+                "product_id": "nw-001",
+                "unit_price_tiers_pix_cents": [
+                    {"min_qty": 1, "max_qty": 1, "unit_cents": 14900},
+                    {"min_qty": 2, "max_qty": 4, "unit_cents": 12800},
+                    {"min_qty": 5, "max_qty": None, "unit_cents": 11990},
+                ],
+            }
+        }
+    }
+
+
+@pytest.fixture
+def team_tiered(monkeypatch):
+    store: dict = {}
+
+    async def fake_get(session_id, tenant_id):
+        return dict(store.get(session_id, {}))
+
+    async def fake_set(session_id, tenant_id, state, ttl_seconds=3600):
+        store[session_id] = dict(state)
+
+    monkeypatch.setattr(team_module, "get_session_state", fake_get)
+    monkeypatch.setattr(team_module, "set_session_state", fake_set)
+
+    t = ZWAFTeam(tenant_config=TieredTenant(), whatsapp_tool=None, router=None)
+    return t, store
+
+
+def test_quantity_detection_buy_context_and_spelled():
+    """AC-2: numero colado a compra/'potes' e por extenso vira quantidade."""
+    q = team_module._quantity_in_message
+    assert q("quero 2 gata") == 2
+    assert q("quero dois") == 2
+    assert q("vou levar tres") == 3
+    assert q("manda 2") == 2
+    assert q("me ve 3 potes") == 3
+    assert q("quero comprar 5 potes") == 5
+    # MED-1: forma por extenso ACENTUADA ("tres" com acento) tambem deve casar.
+    assert q("quero três") == 3
+    assert q("três potes") == 3
+    assert q("vou levar três") == 3
+
+
+def test_quantity_detection_guards_false_positives():
+    """AC-3/AC-4: CEP, numero da casa, CPF, duracao e parcelamento NAO viram quantidade."""
+    q = team_module._quantity_in_message
+    assert q("Numero: 930") is None
+    assert q("01001-000") is None
+    assert q("529.982.247-25") is None
+    assert q(DATA_MSG) is None
+    assert q("faz 2 anos que tenho calor") is None
+    assert q("ha 3 meses") is None
+    assert q("quero parcelar em 2 vezes") is None
+    assert q("quero em 3x") is None
+
+
+@pytest.mark.asyncio
+async def test_anchor_quantity_when_undecided(team):
+    """AC-5: gatilho sem quantidade decidida ancora 2-vs-1 antes de coletar."""
+    t, store = team
+    reply = await _signal_handle(t, "quero o pix", "anc1")
+    low = reply.lower()
+    assert "comecar com 1" in low or "ciclo" in low
+    assert store["anc1"]["pending_checkout"]["stage"] == "quantity"
+    assert not store["anc1"].get("checkout", {}).get("active")
+    # responde a quantidade; como o meio (pix) ja foi dito, vai direto pra coleta
+    reply2 = await _signal_handle(t, "pode ser 2", "anc1")
+    assert "Nome:" in reply2 and "2 potes" in reply2
+    assert store["anc1"]["checkout"]["active"] is True
+    assert store["anc1"]["checkout"]["quantity"] == 2
+    assert store["anc1"]["checkout"]["billing_type"] == "PIX"
+
+
+@pytest.mark.asyncio
+async def test_asks_payment_method_when_undecided(team):
+    """AC-7: quantidade decidida e meio indefinido -> pergunta cartao/Pix antes da coleta."""
+    t, store = team
+    await _signal_handle(t, "quero 2 potes", "pm1")  # decide a quantidade (sem gatilho)
+    reply = await _signal_handle(t, "pode mandar o link", "pm1")
+    low = reply.lower()
+    assert "cartao" in low and "pix" in low
+    assert store["pm1"]["pending_checkout"]["stage"] == "billing"
+    assert not store["pm1"].get("checkout", {}).get("active")
+    reply2 = await _signal_handle(t, "no pix mesmo", "pm1")
+    assert "Nome:" in reply2 and "2 potes" in reply2
+    assert store["pm1"]["checkout"]["billing_type"] == "PIX"
+    assert store["pm1"]["checkout"]["quantity"] == 2
+
+
+@pytest.mark.asyncio
+async def test_already_signaled_method_skips_question(team):
+    """AC-7: se a cliente ja disse o meio, nao repergunta — vai direto pra coleta."""
+    t, store = team
+    reply = await _signal_handle(t, "quero comprar 2 potes no cartao", "pm2")
+    assert "Nome:" in reply
+    assert store["pm2"]["checkout"]["billing_type"] == "CREDIT_CARD"
+    assert "pending_checkout" not in store["pm2"]
+
+
+@pytest.mark.asyncio
+async def test_loma_quantity_change_reconfirms_new_total(team_tiered, _mock_viacep, _mock_pix):
+    """AC-1 (caso Loma): muda 1->2 no meio da coleta, re-confirma R$256 e cobra certo."""
+    t, store = team_tiered
+    await _signal_handle(t, "quero comprar 1 pote, pode mandar o pix", "loma")
+    assert store["loma"]["checkout"]["quantity"] == 1
+    reply = await _signal_handle(t, "Quero 2 gata", "loma")
+    assert "2 potes" in reply and "256,00" in reply  # re-confirmacao do novo total
+    assert store["loma"]["checkout"]["quantity"] == 2
+    assert store["loma"]["checkout"]["active"] is True  # ainda nao gerou
+    reply2 = await _signal_handle(t, DATA_MSG, "loma")
+    assert reply2 == "Pix copia e cola: 00020126XYZ"
+    assert _mock_pix["quantity"] == 2
 
 
 # ─── Pix em 2 mensagens: anuncio + codigo puro ──────────────
@@ -372,7 +494,7 @@ async def test_unlabeled_positional_data_generates_pix(team, _mock_viacep, _mock
     Antes: o nome nunca era extraido de texto livre -> loop 'faltou nome completo'.
     """
     t, store = team
-    await _signal_handle(t, "quero comprar", "m1")
+    await _signal_handle(t, "quero comprar 2 potes, pode mandar o pix", "m1")
     reply = await _signal_handle(t, UNLABELED_DATA_MSG, "m1")
     assert reply == "Pix copia e cola: 00020126XYZ"
     assert _mock_pix["customer_name"] == "Miguel Augusto Oliveira"
@@ -383,7 +505,7 @@ async def test_unlabeled_positional_data_generates_pix(team, _mock_viacep, _mock
 async def test_unlabeled_name_alone_completes_checkout(team, _mock_viacep, _mock_pix):
     """Nome solto sem rotulo ('Miguel Augusto Oliveira') fecha a coleta quando so falta o nome."""
     t, store = team
-    await _signal_handle(t, "quero comprar", "m2")
+    await _signal_handle(t, "quero comprar 2 potes, pode mandar o pix", "m2")
     # manda CPF/CEP/numero rotulados, falta o nome
     r1 = await _signal_handle(t, "CPF: 538.125.328-16\nCEP: 06754-060\nNumero: 167", "m2")
     assert "nome completo" in r1
@@ -406,8 +528,8 @@ async def test_command_phrase_not_captured_as_name(team):
 async def test_quantity_change_during_collection(team, _mock_viacep, _mock_pix):
     """Caso Miguel: 'mas quero 2 potes' no meio da coleta atualiza a quantidade."""
     t, store = team
-    await _signal_handle(t, "quero comprar", "q9")  # ativa com qty 1
-    await _signal_handle(t, "mas quero 2 potes", "q9")  # corrige no meio
+    await _signal_handle(t, "quero comprar 1 pote, pode mandar o pix", "q9")  # ativa com qty 1
+    await _signal_handle(t, "mas quero 2 potes", "q9")  # corrige no meio -> re-confirma
     assert store["q9"]["checkout"]["quantity"] == 2
     reply = await _signal_handle(t, UNLABELED_DATA_MSG, "q9")
     assert reply == "Pix copia e cola: 00020126XYZ"
@@ -421,7 +543,7 @@ async def test_quantity_change_during_collection(team, _mock_viacep, _mock_pix):
 async def test_card_intent_activates_checkout_as_credit_card(team):
     """'quero pagar no cartao' ativa o checkout com billing_type CREDIT_CARD."""
     t, store = team
-    reply = await _signal_handle(t, "quero pagar no cartao", "c1")
+    reply = await _signal_handle(t, "quero comprar 2 potes no cartao", "c1")
     assert reply is not None
     assert "Nome:" in reply  # entrou no formulario de coleta
     assert "cartao" in reply.lower()  # transicao confirma o meio
@@ -433,7 +555,7 @@ async def test_card_intent_activates_checkout_as_credit_card(team):
 async def test_card_billing_reaches_generator(team, _mock_viacep, _mock_pix):
     """End-to-end: a escolha de cartao chega ao gerador como CREDIT_CARD."""
     t, store = team
-    await _signal_handle(t, "quero pagar no cartao", "c2")
+    await _signal_handle(t, "quero comprar 2 potes no cartao", "c2")
     reply = await _signal_handle(t, DATA_MSG, "c2")
     assert reply == "Pix copia e cola: 00020126XYZ"  # gerador mockado
     assert _mock_pix["billing_type"] == "CREDIT_CARD"
@@ -444,7 +566,7 @@ async def test_card_billing_reaches_generator(team, _mock_viacep, _mock_pix):
 async def test_pix_remains_default_without_card_mention(team, _mock_viacep, _mock_pix):
     """Regressao: sem mencao a cartao, o meio continua PIX (maior conversao)."""
     t, _ = team
-    await _signal_handle(t, "quero o pix", "c3")
+    await _signal_handle(t, "quero comprar 2 potes, pode mandar o pix", "c3")
     await _signal_handle(t, DATA_MSG, "c3")
     assert _mock_pix["billing_type"] == "PIX"
 
@@ -453,7 +575,7 @@ async def test_pix_remains_default_without_card_mention(team, _mock_viacep, _moc
 async def test_billing_switch_to_card_during_collection(team, _mock_viacep, _mock_pix):
     """Cliente comeca no Pix e troca para cartao no meio — respeita a ultima escolha."""
     t, store = team
-    await _signal_handle(t, "quero o pix", "c4")
+    await _signal_handle(t, "quero comprar 2 potes, pode mandar o pix", "c4")
     # ainda coletando, cliente muda de ideia junto com parte dos dados
     await _signal_handle(t, "na verdade quero no cartao\nNome: Maria Silva", "c4")
     assert store["c4"]["checkout"]["billing_type"] == "CREDIT_CARD"
@@ -466,10 +588,13 @@ async def test_billing_switch_to_card_during_collection(team, _mock_viacep, _moc
 async def test_card_preference_persisted_before_trigger(team):
     """'prefiro cartao' antes do gatilho e lembrado quando o checkout ativa."""
     t, store = team
-    r0 = await _signal_handle(t, "prefiro pagar no cartao", "c5")
-    # "pagar no cartao" ja e intencao de compra (story-042) -> ativa direto
+    # "pagar no cartao" ja e intencao de compra (story-042); como falta a quantidade,
+    # o gate pergunta 2-vs-1 e lembra o meio (cartao). A resposta ativa a coleta.
+    await _signal_handle(t, "prefiro pagar no cartao", "c5")
+    reply = await _signal_handle(t, "2 potes", "c5")
     assert store["c5"]["checkout"]["billing_type"] == "CREDIT_CARD"
-    assert r0 is not None
+    assert store["c5"]["checkout"]["quantity"] == 2
+    assert "Nome:" in reply
 
 
 @pytest.mark.asyncio
