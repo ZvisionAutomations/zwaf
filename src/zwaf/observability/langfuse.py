@@ -1,4 +1,4 @@
-"""Langfuse observability wrapper for ZWAF.
+﻿"""Langfuse observability wrapper for ZWAF.
 
 Design goals (Story 026):
 - Zero impact on the customer flow: every call is best-effort and fails silently.
@@ -180,6 +180,34 @@ def record_conversation(
             )
     except Exception as exc:
         logger.warning("Langfuse trace failed: %s", mask_pii(str(exc)))
+
+
+def emit_funnel_event(event: Any) -> None:
+    """Best-effort funnel event emission to Langfuse. Never raises.
+
+    Accepts a FunnelEvent dataclass (or any object with .tenant_id, .session_hash,
+    .event, .metadata). The session_hash is already non-reversible (hash_pii output)
+    so it is used as-is for the Langfuse session identifier.
+    """
+    client = _get_client()
+    if client is None:
+        return
+    try:
+        event_name = getattr(event.event, "value", str(event.event))
+        session_id = f"sess_{event.session_hash}" if getattr(event, "session_hash", "") else None
+        safe_meta: dict[str, Any] = {"event": event_name, "tenant_id": str(event.tenant_id)}
+        for k, v in (getattr(event, "metadata", None) or {}).items():
+            safe_meta[str(k)] = mask_pii(str(v))
+        trace_fn = getattr(client, "trace", None)
+        if callable(trace_fn):
+            trace_fn(
+                name=f"funnel:{event_name}",
+                session_id=session_id,
+                tags=[f"event:{event_name}", f"tenant:{event.tenant_id}"],
+                metadata=safe_meta,
+            )
+    except Exception as exc:
+        logger.warning("Langfuse funnel event failed: %s", mask_pii(str(exc)))
 
 
 def flush() -> None:

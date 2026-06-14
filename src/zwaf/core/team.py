@@ -15,7 +15,9 @@ from typing import Any, Callable, Optional
 
 from zwaf.conversion.checkout_flow import advance_checkout, build_transition_message
 from zwaf.conversion.checkout_policy import is_opt_out_message
-from zwaf.conversion.intelligence import ConversionAction, LeadSignal, analyze_message
+from zwaf.conversion.funnel_events import FunnelEventName, build_funnel_event
+from zwaf.conversion.intelligence import BuyingIntent, ConversionAction, LeadSignal, analyze_message
+from zwaf.observability import langfuse as _obs
 from zwaf.core.router_agent import RouterAgent, RouteResult
 from zwaf.core.tenant import TenantConfig
 from zwaf.memory.lead_memory import build_memory_block, maybe_update_lead_memory
@@ -155,6 +157,25 @@ async def _save_session_state(
     await set_session_state(session_id, tenant_id, _encrypt_checkout_state(state))
 
 
+def _emit_event(
+    event: FunnelEventName,
+    phone: str,
+    tenant_id: str,
+    metadata: dict | None = None,
+) -> None:
+    """Fire a PII-safe funnel event — best-effort, never raises."""
+    try:
+        fe = build_funnel_event(
+            event=event,
+            session_id=phone,
+            tenant_id=tenant_id,
+            metadata=metadata or {},
+        )
+        _obs.emit_funnel_event(fe)
+    except Exception:
+        pass
+
+
 class ZWAFTeam:
     """
     Coordenador multi-agente.
@@ -231,6 +252,7 @@ class ZWAFTeam:
                 tenant_id=self._tenant.tenant_id,
                 reason="lead_requested_opt_out",
             )
+            _emit_event(FunnelEventName.OPT_OUT, phone, self._tenant.tenant_id)
             return TeamResponse(
                 response=(
                     "Tudo bem, entendi. Vou encerrar o contato por aqui e marcar para "
@@ -248,6 +270,21 @@ class ZWAFTeam:
             guard_result.sanitized_input,
             tenant_id=self._tenant.tenant_id,
         )
+        # Funnel: diagnosis after every analyzed turn.
+        if conversion_signal.buying_intent != BuyingIntent.NONE:
+            _emit_event(
+                FunnelEventName.DIAGNOSIS_COMPLETED,
+                phone,
+                self._tenant.tenant_id,
+                {"lead_temperature": conversion_signal.buying_intent.value},
+            )
+        if conversion_signal.action == ConversionAction.HANDLE_OBJECTION:
+            _emit_event(
+                FunnelEventName.OBJECTION_DETECTED,
+                phone,
+                self._tenant.tenant_id,
+                {"objection": conversion_signal.objection or ""},
+            )
 
         # 2.5 Checkout deterministico (story-041): se ja estamos coletando dados ou
         # o lead acabou de confirmar a compra, conduzir a coleta SEM o LLM. Tira o
@@ -299,6 +336,13 @@ class ZWAFTeam:
             agent_name=route.agent_name,
             signal=conversion_signal.to_dict(),
         )
+
+        # Funnel: offer presented when the sales agent responds with medium+ intent.
+        if route.agent_name == "vendedor" and conversion_signal.buying_intent in (
+            BuyingIntent.MEDIUM,
+            BuyingIntent.HIGH,
+        ):
+            _emit_event(FunnelEventName.OFFER_PRESENTED, phone, self._tenant.tenant_id)
 
         # 3. Execute agent — monta a memoria do lead (story-044), so com a flag ON.
         lead_memory_block = await self._build_lead_memory_block(session_id, phone)
@@ -461,6 +505,8 @@ class ZWAFTeam:
             # Zera o contador para nao reescalar a cada turno seguinte.
             reset_attempts(session_id, lead_id)
 
+        _emit_event(FunnelEventName.HANDOFF_TO_HUMAN, phone, self._tenant.tenant_id,
+                    {"stage": "address_loop"})
         logger.info(
             "Address checkout escalated to human (anti-loop)",
             extra={"session_id": session_id, "lead_id": lead_id},
@@ -540,6 +586,12 @@ class ZWAFTeam:
         state = _decrypt_checkout_state(
             await get_session_state(session_id, self._tenant.tenant_id)
         )
+        # Funnel: fire conversation_started once per lead session.
+        if not state.get("_funnel_started"):
+            _emit_event(FunnelEventName.CONVERSATION_STARTED, phone, self._tenant.tenant_id)
+            state["_funnel_started"] = True
+            await _save_session_state(session_id, self._tenant.tenant_id, state)
+
         checkout = dict(state.get("checkout") or {})
 
         if checkout.get("active"):
@@ -600,11 +652,19 @@ class ZWAFTeam:
                 state["last_billing_type"] = mentioned_billing
                 await _save_session_state(session_id, self._tenant.tenant_id, state)
 
+        # Track objections for future OBJECTION_RESOLVED detection.
+        if signal.action == ConversionAction.HANDLE_OBJECTION and not state.get("_had_objection"):
+            state["_had_objection"] = True
+            await _save_session_state(session_id, self._tenant.tenant_id, state)
+
         # Nao ativo: inicia a coleta apenas quando ha intencao de compra explicita.
         # Story-046: se a quantidade NAO foi decidida, ancora 2-vs-1 antes de assumir
         # 1; se o meio NAO foi escolhido, pergunta "cartao ou Pix?" — tudo antes da
         # coleta de dados. Se ambos ja estao decididos, vai direto para a coleta.
         if signal.should_send_payment_link:
+            if state.get("_had_objection"):
+                _emit_event(FunnelEventName.OBJECTION_RESOLVED, phone, self._tenant.tenant_id)
+            _emit_event(FunnelEventName.CHECKOUT_REQUESTED, phone, self._tenant.tenant_id)
             quantity = (
                 mentioned_qty if mentioned_qty is not None else state.get("last_quantity")
             )
@@ -662,6 +722,8 @@ class ZWAFTeam:
                 "Vou te conectar agora com nossa equipe para te ajudar pessoalmente."
             )
 
+        _emit_event(FunnelEventName.HANDOFF_TO_HUMAN, phone, self._tenant.tenant_id,
+                    {"stage": "checkout_escalation"})
         logger.info(
             "Critical signal during checkout escalated to human",
             extra={
@@ -823,7 +885,7 @@ class ZWAFTeam:
             quantity = int(qty) if qty else quantity
         except (TypeError, ValueError):
             pass
-        return await generator(
+        reply = await generator(
             product_id=product_id,
             customer_phone=phone,
             customer_name=collected.get("name", ""),
@@ -832,6 +894,13 @@ class ZWAFTeam:
             billing_type=billing_type,
             quantity=max(1, int(quantity or 1)),
         )
+        _emit_event(
+            FunnelEventName.CHECKOUT_LINK_GENERATED,
+            phone,
+            self._tenant.tenant_id,
+            {"stage": billing_type or "PIX"},
+        )
+        return reply
 
     def _default_product_id(self, product_hint: Optional[str]) -> str:
         """Resolve o produto do checkout: hint do sinal, unico produto do tenant, ou new-woman."""

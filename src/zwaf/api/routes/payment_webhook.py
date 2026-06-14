@@ -192,6 +192,7 @@ async def receive_payment_webhook(
                     "Lead purchase_history updated",
                     extra={"tenant_id": tenant_id, "phone_tail": lead_phone[-4:]},
                 )
+                _emit_payment_confirmed(tenant_id, lead_phone, amount_cents)
         finally:
             await conn.close()
     except Exception as e:
@@ -276,6 +277,23 @@ async def _apply_inventory_effects(
                 )
     except Exception as exc:
         logger.error("Inventory effect failed for %s: %s", payment_id, exc)
+
+
+def _emit_payment_confirmed(tenant_id: str, lead_phone: str, amount_cents: int) -> None:
+    """Best-effort funnel event for confirmed payments. Never raises."""
+    try:
+        from zwaf.conversion.funnel_events import FunnelEventName, build_funnel_event
+        from zwaf.observability import langfuse as _obs
+
+        event = build_funnel_event(
+            event=FunnelEventName.PAYMENT_CONFIRMED,
+            session_id=lead_phone,
+            tenant_id=tenant_id,
+            metadata={"amount_cents": amount_cents},
+        )
+        _obs.emit_funnel_event(event)
+    except Exception:
+        pass
 
 
 def _parse_external_reference(reference: str) -> tuple[str, str]:
