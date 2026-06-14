@@ -16,7 +16,7 @@ from slowapi.errors import RateLimitExceeded
 
 from zwaf.api.limiter import limiter
 from zwaf.api.middleware.auth import APIKeyMiddleware
-from zwaf.api.routes import health, webhook, payment_webhook, superfrete_webhook
+from zwaf.api.routes import health, webhook, payment_webhook, superfrete_webhook, improvements
 from zwaf.core.team import build_team
 from zwaf.core.tenant import TenantConfig, TenantLoadError
 from zwaf.reporting.error_handler import notify_critical_error, setup_critical_error_handler
@@ -173,6 +173,7 @@ app.include_router(health.router, tags=["System"])
 app.include_router(webhook.router, prefix="/v1/webhook", tags=["Webhook"])
 app.include_router(payment_webhook.router, prefix="/v1/webhook", tags=["Payments"])
 app.include_router(superfrete_webhook.router, prefix="/v1/webhook", tags=["Shipping"])
+app.include_router(improvements.router, prefix="/v1/admin", tags=["Admin"])
 
 
 @app.exception_handler(Exception)
