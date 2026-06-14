@@ -11,12 +11,15 @@ Correções vs Sofia SDR:
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
+import mimetypes
 import os
 import random
 import re
 import time
 from collections import defaultdict, deque
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -283,6 +286,85 @@ class WhatsAppTool(BaseTool):
             self._daily_sent_count += 1
             self._rate_limiter.record_sent(number)
         return result
+
+    async def send_image(
+        self,
+        phone: str,
+        caption: str,
+        media_url: Optional[str] = None,
+        media_path: Optional[str] = None,
+        session_id: Optional[str] = None,
+        asset_id: Optional[str] = None,
+        max_attempts: int = 3,
+    ) -> ToolResult:
+        """Envia imagem via Evolution API. Aceita URL pública ou caminho local (base64)."""
+        number = _normalize_phone(phone)
+        if media_url:
+            payload: dict = {
+                "number": number,
+                "mediatype": "image",
+                "mimetype": "image/jpeg",
+                "media": media_url,
+                "caption": caption,
+                "fileName": "social-proof.jpg",
+            }
+        elif media_path:
+            path = Path(media_path)
+            mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+            encoded = base64.b64encode(path.read_bytes()).decode()
+            payload = {
+                "number": number,
+                "mediatype": "image",
+                "mimetype": mime,
+                "media": encoded,
+                "caption": caption,
+                "fileName": path.name,
+            }
+        else:
+            return ToolResult.fail("send_image requires media_url or media_path")
+
+        for attempt in range(max_attempts):
+            try:
+                return await self._send_media_raw_with_5xx_retry(payload, asset_id)
+            except RateLimitError:
+                if attempt < max_attempts - 1:
+                    jitter = random.uniform(0, HTTP_429_MAX_JITTER)
+                    backoff = HTTP_429_MIN_BACKOFF + jitter
+                    await asyncio.sleep(backoff)
+        return ToolResult.fail(f"Rate limit (HTTP 429) persisted after {max_attempts} attempts")
+
+    async def _send_media_raw_with_5xx_retry(
+        self,
+        payload: dict,
+        asset_id: Optional[str] = None,
+        max_attempts: int = 3,
+        base_delay: float = 1.0,
+    ) -> ToolResult:
+        """POST para /message/sendMedia com retry 5xx. NÃO captura 429."""
+        last_err: Exception | None = None
+        for attempt in range(max_attempts):
+            try:
+                url = f"{self.base_url}/message/sendMedia/{self.current_instance}"
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    resp = await client.post(url, json=payload, headers=self._headers())
+                    if resp.status_code == 429:
+                        raise RateLimitError(f"HTTP 429: {resp.text[:100]}")
+                    resp.raise_for_status()
+                    data = resp.json()
+                    return ToolResult.ok({"message_id": data.get("key", {}).get("id", ""), "status": "sent"})
+            except RateLimitError:
+                raise
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429:
+                    raise RateLimitError(f"HTTP 429: {e.response.text[:100]}") from e
+                last_err = e
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(base_delay * (2 ** attempt))
+            except httpx.RequestError as e:
+                last_err = e
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(base_delay * (2 ** attempt))
+        return ToolResult.fail(f"Evolution API media error after {max_attempts} attempts: {last_err}")
 
     async def _send_with_429_retry(
         self,
