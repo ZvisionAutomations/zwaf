@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, ValidationError
+from zwaf.memory.lead_attribution import extract_attribution, record_lead_attribution
 
 logger = logging.getLogger("zwaf.api.webhook")
 
@@ -129,6 +130,7 @@ async def receive_webhook(
     if phone and text:
         session_id = f"{tenant_id}_{phone}"
         lead_id = phone
+        attribution = extract_attribution(body, tenant_id=tenant_id, session_id=session_id, phone=phone)
 
         logger.info(
             "Webhook message received",
@@ -139,6 +141,9 @@ async def receive_webhook(
                 "instance": payload.instance,
             },
         )
+
+        if attribution.has_signal:
+            asyncio.create_task(record_lead_attribution(attribution))
 
         asyncio.create_task(
             _process_and_respond(team, text, phone, session_id, lead_id, tenant_id)
