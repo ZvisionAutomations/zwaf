@@ -74,9 +74,36 @@ def _stock(metrics: dict, initial_stock: int) -> str:
     return f"{initial_stock - int(total_sales)} potes"
 
 
+def _metric_number(metrics: dict, key: str) -> float:
+    value = metrics.get(key)
+    if value is None:
+        return 0
+    return float(value)
+
+
+def _build_alerts(metrics: dict, initial_stock: int) -> list[str]:
+    total_sales_all_time = _metric_number(metrics, "total_sales_all_time")
+    sales_today = _metric_number(metrics, "sales_today")
+    conversations_today = _metric_number(metrics, "conversations_today")
+    conversion_rate = _metric_number(metrics, "conversion_rate")
+
+    alerts = []
+    if (initial_stock - total_sales_all_time) < 50:
+        alerts.append("⚠️  Estoque crítico: menos de 50 potes restantes")
+    if sales_today == 0 and conversations_today >= 5:
+        alerts.append(f"⚠️  Nenhuma venda hoje com {int(conversations_today)} conversas ativas")
+    if conversations_today >= 10 and conversion_rate < 0.05:
+        alerts.append(f"⚠️  Taxa de conversão abaixo de 5% ({conversion_rate:.1%})")
+    if conversations_today == 0:
+        alerts.append("⚠️  Nenhuma conversa iniciada hoje")
+    return alerts
+
+
 def format_report(metrics: dict, date: str, initial_stock: int = 600) -> str:
     """Formata mensagem final em portugues com emojis. Sem dependencia de DB."""
     revenue_str = _currency_brl(metrics.get("revenue_today_cents"))
+    alerts = _build_alerts(metrics, initial_stock)
+    alerts_str = "\n".join(f"• {alert}" for alert in alerts) if alerts else "nenhum"
     return (
         f"*Raiz Vital - Relatorio {date}*\n\n"
         f"Conversas hoje: {_count(metrics.get('conversations_today'))}\n"
@@ -84,7 +111,7 @@ def format_report(metrics: dict, date: str, initial_stock: int = 600) -> str:
         f"Vendas confirmadas: {_count(metrics.get('sales_today'))}\n"
         f"Receita do dia: {revenue_str}\n"
         f"Estoque restante: {_stock(metrics, initial_stock)}\n\n"
-        f"Alertas: nenhum\n\n"
+        f"Alertas: {alerts_str}\n\n"
         f"_Proximo relatorio: amanha as 20:30_"
     )
 
