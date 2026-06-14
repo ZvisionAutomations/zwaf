@@ -6,6 +6,7 @@ Orquestra o RouterAgent + 5 agentes especializados.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 import unicodedata
@@ -17,6 +18,7 @@ from zwaf.conversion.checkout_flow import advance_checkout, build_transition_mes
 from zwaf.conversion.checkout_policy import is_opt_out_message
 from zwaf.conversion.funnel_events import FunnelEventName, build_funnel_event
 from zwaf.conversion.intelligence import BuyingIntent, ConversionAction, LeadSignal, analyze_message
+from zwaf.conversion.self_improvement import ImprovementKind, ImprovementQueue
 from zwaf.observability import langfuse as _obs
 from zwaf.core.router_agent import RouterAgent, RouteResult
 from zwaf.core.tenant import TenantConfig
@@ -202,6 +204,10 @@ class ZWAFTeam:
         self._router = router
         self._db_url = db_url
         self._guard = _build_guard()
+        self._improvement_queue = ImprovementQueue(
+            db_url=os.getenv("DATABASE_URL"),
+            tenant_id=tenant_config.tenant_id,
+        )
         # Referencia ao scheduler para shutdown no lifespan
         self._fidelizacao_scheduler = fidelizacao_scheduler
         self._inventory_sweep_scheduler = inventory_sweep_scheduler
@@ -219,6 +225,21 @@ class ZWAFTeam:
             chunk = part.strip()
             if chunk:
                 await self._whatsapp.send_message(phone=phone, text=chunk, session_id=session_id)
+
+    def _suggest_improvement(
+        self,
+        kind: ImprovementKind,
+        summary: str,
+        evidence: dict | None = None,
+    ) -> None:
+        try:
+            self._improvement_queue.suggest(
+                kind=kind,
+                summary=summary,
+                evidence=evidence or {},
+            )
+        except Exception:
+            pass
 
     async def process(
         self,
@@ -252,6 +273,10 @@ class ZWAFTeam:
                 tenant_id=self._tenant.tenant_id,
                 reason="lead_requested_opt_out",
             )
+            self._suggest_improvement(
+                ImprovementKind.SEGMENTATION,
+                "Lead solicitou opt-out — revisar segmentacao ou abordagem de campanha",
+            )
             _emit_event(FunnelEventName.OPT_OUT, phone, self._tenant.tenant_id)
             return TeamResponse(
                 response=(
@@ -283,6 +308,11 @@ class ZWAFTeam:
                 FunnelEventName.OBJECTION_DETECTED,
                 phone,
                 self._tenant.tenant_id,
+                {"objection": conversion_signal.objection or ""},
+            )
+            self._suggest_improvement(
+                ImprovementKind.COPY,
+                f"Objecao detectada: {conversion_signal.objection or 'nao especificada'}",
                 {"objection": conversion_signal.objection or ""},
             )
 
@@ -724,6 +754,11 @@ class ZWAFTeam:
 
         _emit_event(FunnelEventName.HANDOFF_TO_HUMAN, phone, self._tenant.tenant_id,
                     {"stage": "checkout_escalation"})
+        self._suggest_improvement(
+            ImprovementKind.TEMPLATE,
+            f"Escala critica durante checkout: {reason}",
+            {"sentiment": signal.sentiment.value, "reason": reason},
+        )
         logger.info(
             "Critical signal during checkout escalated to human",
             extra={
