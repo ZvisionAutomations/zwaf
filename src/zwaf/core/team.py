@@ -450,12 +450,30 @@ class ZWAFTeam:
         # presente, ela e enviada LITERALMENTE ao cliente, sem parafrase do LLM —
         # garante consistencia mesmo com modelos que tendem a reescrever erros.
         payment_sink: dict[str, Any] = {}
+        ab_variant = ""
+        if agent_name == "vendedor":
+            import asyncio
+            from zwaf.ab_testing.ab_test import get_variant, record_assignment
+
+            ab_phone = phone or session_id
+            ab_variant = get_variant(ab_phone, self._tenant.tenant_id)
+            asyncio.create_task(
+                record_assignment(
+                    ab_phone,
+                    self._tenant.tenant_id,
+                    "vendedor_prompt",
+                    ab_variant,
+                    self._db_url,
+                )
+            )
+
         agent = self._build_agent(
             agent_name,
             session_id,
             lead_id,
             result_sink=payment_sink,
             lead_memory_block=lead_memory_block,
+            ab_variant=ab_variant,
         )
         try:
             run_response = await agent.arun(message)
@@ -553,6 +571,7 @@ class ZWAFTeam:
         lead_id: str,
         result_sink: Optional[dict] = None,
         lead_memory_block: str = "",
+        ab_variant: str = "",
     ):
         """Factory: constroi o agente Agno correto para o nome dado."""
         kwargs: Any = dict(
@@ -568,6 +587,7 @@ class ZWAFTeam:
             return build_vendedor_agent(
                 payment_result_sink=result_sink,
                 lead_memory_block=lead_memory_block,
+                ab_variant=ab_variant,
                 **kwargs,
             )
         if agent_name == "recompra":

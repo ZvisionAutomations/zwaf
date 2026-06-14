@@ -20,7 +20,7 @@ logger = logging.getLogger("zwaf.agents.base")
 _TENANTS_ROOT = Path(__file__).parent.parent.parent.parent / "tenants"
 
 
-def _load_prompt(tenant_id: str, agent_name: str) -> str:
+def _load_prompt(tenant_id: str, agent_name: str, variant: str = "") -> str:
     """Carrega o system prompt de tenants/{tenant_id}/prompts/{agent_name}.md.
 
     Se existir um KB do agente (`{agent_name}.kb.md` no mesmo diretorio), ele e
@@ -28,6 +28,18 @@ def _load_prompt(tenant_id: str, agent_name: str) -> str:
     de fato no contexto do modelo, em vez de ser so uma referencia que ele nao le.
     """
     prompt_dir = _TENANTS_ROOT / tenant_id / "prompts"
+    if variant and variant.upper() != "A":
+        variant_path = prompt_dir / f"{agent_name}_{variant.lower()}.md"
+        if variant_path.exists():
+            prompt = variant_path.read_text(encoding="utf-8")
+            kb_path = prompt_dir / f"{agent_name}_{variant.lower()}.kb.md"
+            if kb_path.exists():
+                kb = kb_path.read_text(encoding="utf-8").strip()
+                if kb:
+                    prompt = f"{prompt}\n\n---\n\n{kb}"
+            logger.info("Prompt variant %s loaded for %s/%s", variant, tenant_id, agent_name)
+            return prompt
+
     prompt_path = prompt_dir / f"{agent_name}.md"
     if not prompt_path.exists():
         logger.warning("Prompt file not found: %s - using default", prompt_path)
@@ -86,6 +98,7 @@ def build_agent(
     lead_id: str,
     db_url: str = "",
     lead_memory_block: str = "",
+    prompt_variant: str = "",
 ) -> Agent:
     """
     Factory para construir um Agno Agent configurado para um tenant.
@@ -96,7 +109,7 @@ def build_agent(
     entra no contexto do modelo de forma dinamica, por request. Bloco vazio = sem
     reinjecao (lead novo / feature flag desligada).
     """
-    system_prompt = _load_prompt(tenant_config.tenant_id, agent_name)
+    system_prompt = _load_prompt(tenant_config.tenant_id, agent_name, variant=prompt_variant)
     if lead_memory_block:
         system_prompt = f"{system_prompt}\n\n---\n\n{lead_memory_block}"
     model = _make_llm(tenant_config)
