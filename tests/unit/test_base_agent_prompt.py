@@ -23,3 +23,21 @@ def test_agent_without_kb_loads_plain_prompt():
     prompt = _load_prompt("livia-raiz-vital", "suporte")
     assert prompt  # carrega o suporte.md (ou default) sem quebrar
     assert "KB de Persuasão" not in prompt  # suporte nao tem KB anexo
+
+
+def test_vendedor_prompt_pix_collects_in_chat_no_external_form():
+    """AC-2 (story-063): no Pix a coleta e no proprio chat; sem "formulario" externo.
+
+    Bug real: o prompt antigo dizia "o sistema envia um formulario curto", o que
+    induzia a Livia a recusar PII voluntaria e prometer um "formulario seguro"
+    fantasma. O prompt agora descreve o modelo copia-e-cola no proprio chat e
+    proibe o aviso de privacidade no Pix.
+    """
+    prompt = _load_prompt("livia-raiz-vital", "vendedor")
+    lower = prompt.lower()
+    # Guardrails novos presentes:
+    assert "não pode armazenar ou utilizar os dados" in lower
+    assert "no próprio chat" in lower
+    # Linguagem antiga removida (Pix nao "envia um formulario curto"):
+    assert "envia um formulário\ncurto" not in lower
+    assert "envia um formulário curto" not in lower

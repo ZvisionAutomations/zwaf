@@ -39,6 +39,54 @@ def test_parse_message_labeled_takes_precedence_over_free():
 
 
 # ---------------------------------------------------------------------------
+# story-063: numero embutido na linha de endereco em mensagem rotulada
+# ---------------------------------------------------------------------------
+
+
+def test_parse_message_recovers_number_from_unlabeled_address_line():
+    """AC-3: rotulos + endereco solto com numero embutido (dados sinteticos).
+
+    Antes da story-063 o parser confiava so nos rotulos; a linha "Rua ... 52,
+    casa 97" (sem rotulo Numero:) era ignorada e o checkout pedia "faltou numero".
+    """
+    text = (
+        "Nome: Mariana Costa Lima\n"
+        f"Cpf: {VALID_CPF}\n"
+        "CEP: 01001000\n"
+        "Rua das Acacias 52, casa 97, Sao Paulo"
+    )
+    parsed = cf.parse_message(text)
+    assert parsed["number"] == "52"
+    assert "casa 97" in parsed.get("complement", "")
+    # E o numero NAO e mais pedido.
+    assert "number" not in cf.pending_required(cf.merge_collected({}, parsed))
+
+
+def test_parse_message_number_recovery_ignores_cpf_cep_digits():
+    """AC-4/FR-5: digitos de CPF (11) e CEP (8) nunca viram numero da casa."""
+    text = (
+        "Nome: Maria Silva\n"
+        "CPF: 529.982.247-25\n"
+        "CEP: 01001-000\n"
+        "Rua das Flores, Centro, Sao Paulo"  # endereco SEM numero
+    )
+    parsed = cf.parse_message(text)
+    assert not parsed.get("number")
+    assert "number" in cf.pending_required(cf.merge_collected({}, parsed))
+
+
+def test_number_recovery_skips_line_carrying_cpf_digits():
+    """FR-5: uma linha sem rotulo que contem o CPF nao vira numero da casa."""
+    text = (
+        "CEP: 01001-000\n"
+        "Documento 529.982.247-25\n"  # sem ':' -> nao rotulado, mas e o CPF
+        "Maria Silva"
+    )
+    parsed = cf.parse_message(text)
+    assert not parsed.get("number")  # nada do CPF capturado como numero
+
+
+# ---------------------------------------------------------------------------
 # Validacao por campo
 # ---------------------------------------------------------------------------
 
