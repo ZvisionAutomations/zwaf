@@ -190,6 +190,41 @@ def _name_from_free_text(text: str) -> str:
     return ""
 
 
+# story-063: rotulos cujas linhas NAO devem ser varridas atras do numero da casa
+# (carregam digitos que confundem — CPF/CEP — ou ja sao o proprio numero).
+_NUMBER_SCAN_SKIP_LABELS = ("name", "document", "postal_code", "number", "quantity")
+
+
+def _number_from_unlabeled_lines(text: str, labeled: dict[str, str]) -> dict[str, str]:
+    """Recupera numero/complemento de linhas SEM rotulo (ex.: a linha do endereco).
+
+    Caso real (Kaue, story-063): a cliente manda os campos rotulados mas escreve o
+    endereco numa linha solta ("Rua X 52, casa 97"). Sem o rotulo "Numero:", o
+    numero nunca era extraido e o checkout pedia "faltou numero da casa" mesmo com
+    ele presente. Aqui varremos apenas linhas que NAO casam rotulos de
+    CPF/CEP/numero e que NAO contem os digitos do CPF/CEP ja coletados — evitando
+    confundir esses digitos com o numero da casa (FR-5).
+    """
+    doc_digits = only_digits(labeled.get("document", ""))
+    cep_digits = only_digits(labeled.get("postal_code", ""))
+    skip_patterns = [_LABEL_PATTERNS[k] for k in _NUMBER_SCAN_SKIP_LABELS]
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if any(pattern.search(line) for pattern in skip_patterns):
+            continue
+        line_digits = only_digits(line)
+        if doc_digits and doc_digits in line_digits:
+            continue
+        if len(cep_digits) == 8 and cep_digits in line_digits:
+            continue
+        parsed = parse_free_text_address(line)
+        if parsed.get("number"):
+            return parsed
+    return {}
+
+
 def parse_message(text: str) -> dict[str, str]:
     """Extrai campos de uma mensagem.
 
@@ -209,6 +244,15 @@ def parse_message(text: str) -> dict[str, str]:
             name = _name_from_free_text(text)
             if name:
                 labeled["name"] = name
+        # story-063: numero embutido em linha de endereco NAO rotulada
+        # (ex.: "Rua X 52, casa 97"). Sem isto, mensagem rotulada sem "Numero:"
+        # entrava em loop de "faltou numero da casa".
+        if not labeled.get("number"):
+            recovered = _number_from_unlabeled_lines(text, labeled)
+            if recovered.get("number"):
+                labeled["number"] = recovered["number"]
+                if recovered.get("complement") and not labeled.get("complement"):
+                    labeled["complement"] = recovered["complement"]
         return labeled
 
     # Sem rotulos: parser de texto livre completo (story-040) + CPF + nome.

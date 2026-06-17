@@ -28,11 +28,14 @@ _CEP_RE = re.compile(r"\b(\d{5})-?\.?\s?(\d{3})\b")
 
 # Numero do endereco com complemento opcional (FR-3). Cobre:
 #   "930", "n 930", "nº 930", "no 930", "numero 930", "930 casa 5",
-#   "930/5", "930 - casa 5".
+#   "930/5", "930 - casa 5", "52, casa 97" (separador virgula — story-063).
 _NUMBER_RE = re.compile(
     r"(?:n[ºo°.]?\s*|numero\s+|num\s+)?"   # prefixo opcional "n", "nº", "numero"
     r"(?P<number>\d{1,6})"                   # o numero em si
-    r"(?P<complement>\s*(?:[/-]\s*\w.*|\s+(?:casa|apto|apartamento|bloco|fundos|sala|lote|cs|ap)\b.*))?",
+    r"(?P<complement>"
+    r"\s*[/-]\s*\w.*"                          # "930/5", "930 - casa 5"
+    r"|[\s,]+(?:casa|apto|apartamento|bloco|fundos|sala|lote|cs|ap)\b.*"  # "930 casa 5", "52, casa 97"
+    r")?",
     re.IGNORECASE,
 )
 
