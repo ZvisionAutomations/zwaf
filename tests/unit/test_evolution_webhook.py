@@ -27,7 +27,7 @@ class FakeTenant:
 class FakeTeam:
     _tenant = FakeTenant()
 
-    async def process(self, message, phone, session_id, lead_id):
+    async def process(self, message, phone, session_id, lead_id, push_name=""):
         raise AssertionError("background task should not run in validation tests")
 
     async def send_response(self, phone, text, session_id):
@@ -39,13 +39,14 @@ class ProcessingTeam:
         self.process_calls = []
         self.sent_messages = []
 
-    async def process(self, message, phone, session_id, lead_id):
+    async def process(self, message, phone, session_id, lead_id, push_name=""):
         self.process_calls.append(
             {
                 "message": message,
                 "phone": phone,
                 "session_id": session_id,
                 "lead_id": lead_id,
+                "push_name": push_name,
             }
         )
         return type(
@@ -264,3 +265,53 @@ async def test_process_audio_failure_sends_fallback_without_agent(monkeypatch):
             "session_id": "sess-1",
         }
     ]
+
+
+# ---------------------------------------------------------------------------
+# story-068: extracao do pushName no inbound de texto + fallback CTWA/@lid
+# ---------------------------------------------------------------------------
+
+
+def test_extract_message_captures_push_name():
+    phone, text, push_name = webhook._extract_message(
+        {
+            "data": {
+                "key": {"remoteJid": "5511999990001@s.whatsapp.net", "fromMe": False},
+                "message": {"conversation": "ola"},
+                "pushName": "Maria Silva",
+            }
+        }
+    )
+    assert phone == "5511999990001"
+    assert text == "ola"
+    assert push_name == "Maria Silva"
+
+
+def test_extract_message_push_name_empty_when_absent_ctwa():
+    # Lead CTWA/@lid de anuncio: pushName ausente -> "" (NUNCA o telefone).
+    phone, text, push_name = webhook._extract_message(
+        {
+            "data": {
+                "key": {"remoteJid": "5511999990001@lid", "fromMe": False},
+                "message": {"conversation": "ola"},
+            }
+        }
+    )
+    assert phone == "5511999990001"
+    assert push_name == ""
+
+
+@pytest.mark.asyncio
+async def test_process_and_respond_threads_push_name_to_team():
+    team = ProcessingTeam()
+    await webhook._process_and_respond(
+        team,
+        "quero comprar",
+        "5511999990001",
+        "sess-1",
+        "lead-1",
+        "livia-raiz-vital",
+        "Joao Pedro",
+    )
+    assert team.process_calls[0]["push_name"] == "Joao Pedro"
+    assert team.sent_messages[0]["text"] == "ok"

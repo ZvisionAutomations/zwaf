@@ -14,8 +14,15 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from zwaf.conversion.checkout_flow import advance_checkout, build_transition_message
+from zwaf.conversion.checkout_flow import (
+    advance_checkout,
+    build_name_confirm_message,
+    build_transition_message,
+    is_affirmative_name_confirmation,
+    sanitize_name,
+)
 from zwaf.conversion.checkout_policy import is_opt_out_message
+from zwaf.conversion.commercial_followup import mark_followup_replied
 from zwaf.conversion.funnel_events import FunnelEventName, build_funnel_event
 from zwaf.conversion.intelligence import BuyingIntent, ConversionAction, LeadSignal, analyze_message
 from zwaf.conversion.self_improvement import ImprovementKind, ImprovementQueue
@@ -247,8 +254,14 @@ class ZWAFTeam:
         phone: str,
         session_id: str,
         lead_id: str,
+        push_name: str = "",
     ) -> TeamResponse:
-        """Processa uma mensagem do lead e retorna a resposta."""
+        """Processa uma mensagem do lead e retorna a resposta.
+
+        ``push_name`` (story-068): nome de perfil do WhatsApp vindo do inbound.
+        Declarativo (nao validado contra documento) — usado para PRE-PREENCHER e
+        CONFIRMAR o nome no checkout, nunca cobrado sem confirmacao do cliente.
+        """
         start = time.monotonic()
 
         # 1. Security guard
@@ -266,6 +279,12 @@ class ZWAFTeam:
                 latency_ms=(time.monotonic() - start) * 1000,
                 route_result=RouteResult("guard", 1.0),
             )
+
+        await mark_followup_replied(
+            self._db_url,
+            self._tenant.tenant_id,
+            phone,
+        )
 
         if is_opt_out_message(guard_result.sanitized_input):
             await mark_opt_out(
@@ -325,6 +344,7 @@ class ZWAFTeam:
             session_id=session_id,
             lead_id=lead_id,
             signal=conversion_signal,
+            push_name=push_name,
         )
         if checkout_reply is not None:
             await append_conversion_event(
@@ -627,6 +647,7 @@ class ZWAFTeam:
         session_id: str,
         lead_id: str,
         signal: LeadSignal,
+        push_name: str = "",
     ) -> Optional[str]:
         """Conduz a coleta deterministica de checkout (story-041).
 
@@ -641,6 +662,17 @@ class ZWAFTeam:
             _emit_event(FunnelEventName.CONVERSATION_STARTED, phone, self._tenant.tenant_id)
             state["_funnel_started"] = True
             await _save_session_state(session_id, self._tenant.tenant_id, state)
+
+        # Story-068: persiste o pushName sanitizado no estado do lead para
+        # pre-preencher/confirmar o nome no checkout. So grava enquanto o nome
+        # ainda nao foi confirmado e quando ha um valor utilizavel novo. Lead de
+        # anuncio (CTWA/@lid) chega com pushName null/vazio -> sanitize_name
+        # retorna "" e nada e gravado (fallback: pedir o nome como hoje).
+        if push_name and not state.get("name_confirmed"):
+            sanitized_push = sanitize_name(push_name)
+            if sanitized_push and state.get("push_name") != sanitized_push:
+                state["push_name"] = sanitized_push
+                await _save_session_state(session_id, self._tenant.tenant_id, state)
 
         checkout = dict(state.get("checkout") or {})
 
@@ -1052,6 +1084,35 @@ class ZWAFTeam:
                 billing_type=billing,
                 product_hint=pending.get("product_hint"),
             )
+        if stage == "name_confirm":
+            # Story-068: resposta a "Posso registrar em nome de X?".
+            qty = int(pending.get("quantity", 1) or 1)
+            billing = pending.get("billing_type") or "PIX"
+            push_name = (pending.get("push_name") or "").strip()
+            if push_name and is_affirmative_name_confirmation(message):
+                # Confirmado: nome vira o nome de cobranca (confirmado pelo cliente).
+                state["name_confirmed"] = True
+                return await self._start_checkout(
+                    phone=phone,
+                    session_id=session_id,
+                    state=state,
+                    quantity=qty,
+                    billing_type=billing,
+                    product_hint=pending.get("product_hint"),
+                    known_name=push_name,
+                )
+            # Nao confirmou (ou quer outro nome): segue a coleta normal pedindo o
+            # nome no formulario. Descarta o pushName para nao reofertar.
+            state.pop("push_name", None)
+            return await self._start_checkout(
+                phone=phone,
+                session_id=session_id,
+                state=state,
+                quantity=qty,
+                billing_type=billing,
+                product_hint=pending.get("product_hint"),
+                offer_name_autofill=False,
+            )
         state.pop("pending_checkout", None)
         await _save_session_state(session_id, self._tenant.tenant_id, state)
         return None
@@ -1065,12 +1126,20 @@ class ZWAFTeam:
         quantity: int,
         billing_type: str,
         product_hint: Optional[str],
+        known_name: str = "",
+        offer_name_autofill: bool = True,
     ) -> str:
         """Inicia o checkout com a quantidade e o meio ja decididos.
 
         Story-048: CARTAO vai para o checkout HOSPEDADO do Asaas — os dados do cliente
         (nome/CPF/endereco) sao coletados na pagina, NAO no chat; nao ativa coleta.
         PIX (e demais) seguem a coleta deterministica no chat (story-041/046).
+
+        Story-068: no PIX, se houver um ``pushName`` sanitizado no estado e o nome
+        ainda nao foi confirmado, oferece a confirmacao de 1 toque ANTES do
+        formulario (``offer_name_autofill``). Quando o nome ja foi confirmado, ele
+        chega em ``known_name`` e e pre-semeado nos campos (formulario sem
+        ``Nome:``).
         """
         product_id = self._default_product_id(product_hint)
         qty = max(1, int(quantity or 1))
@@ -1095,18 +1164,36 @@ class ZWAFTeam:
                 collected={},
                 resolved_address={},
             )
+        # Story-068: oferece a confirmacao do nome (pushName) antes do formulario.
+        confirmed_name = (known_name or "").strip()
+        push_name = (state.get("push_name") or "").strip()
+        if offer_name_autofill and not confirmed_name and push_name and not state.get("name_confirmed"):
+            state["pending_checkout"] = {
+                "stage": "name_confirm",
+                "quantity": qty,
+                "billing_type": billing_type,
+                "product_hint": product_hint or "",
+                "push_name": push_name,
+            }
+            await _save_session_state(session_id, self._tenant.tenant_id, state)
+            return build_name_confirm_message(push_name)
+
+        fields: dict[str, Any] = {}
+        if confirmed_name:
+            # Nome CONFIRMADO pelo cliente (pushName confirmado) — semeado direto.
+            fields["name"] = confirmed_name
         checkout = {
             "active": True,
             "product_id": product_id,
             "billing_type": billing_type,
             "quantity": qty,
-            "fields": {},
+            "fields": fields,
             "attempts": 0,
         }
         state["checkout"] = checkout
         state.pop("pending_checkout", None)
         await _save_session_state(session_id, self._tenant.tenant_id, state)
-        return build_transition_message(qty, billing_type)
+        return build_transition_message(qty, billing_type, known_name=confirmed_name)
 
     def _tenant_products(self) -> dict:
         return (getattr(self._tenant, "payment", None) or {}).get("products", {})

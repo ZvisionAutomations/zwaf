@@ -456,7 +456,7 @@ async def test_loma_quantity_change_reconfirms_new_total(team_tiered, _mock_viac
 @pytest.mark.asyncio
 async def test_send_response_splits_pix_into_two_messages():
     """O Pix sai em 2 mensagens: a 2a e SO o codigo (copiar sem texto junto)."""
-    from zwaf.tools.payment import MESSAGE_SPLIT, _pix_message
+    from zwaf.tools.payment import _pix_message
 
     sent: list[str] = []
 
@@ -623,3 +623,99 @@ async def test_inventory_sweep_scheduler_calls_release_expired(monkeypatch):
 
     assert released == 2
     assert captured == {"tenant_id": "livia-raiz-vital"}
+
+
+# ---------------------------------------------------------------------------
+# story-068: pushName -> confirmacao de nome (1 toque) e fallback CTWA
+# ---------------------------------------------------------------------------
+
+
+async def _signal_handle_push(t, message, session_id, push_name=""):
+    signal = analyze_message(message, tenant_id=TENANT)
+    return await t._handle_checkout(
+        message=message, phone="5511999990001", session_id=session_id,
+        lead_id="lead-1", signal=signal, push_name=push_name,
+    )
+
+
+@pytest.mark.asyncio
+async def test_pushname_offers_one_tap_confirmation(team):
+    """AC-1: lead com pushName valido confirma o nome com 1 pergunta, sem pedir do zero."""
+    t, store = team
+    reply = await _signal_handle_push(
+        t, "quero comprar 2 potes, pode mandar o pix", "pn1", push_name="joao pedro"
+    )
+    # pergunta de confirmacao (nao o formulario), com o nome sanitizado
+    assert "Joao Pedro" in reply
+    assert "Nome:" not in reply
+    assert store["pn1"]["pending_checkout"]["stage"] == "name_confirm"
+    assert store["pn1"].get("checkout", {}).get("active") is not True
+
+
+@pytest.mark.asyncio
+async def test_pushname_confirmed_skips_name_in_form(team):
+    """AC-1/AC-3: confirmado -> transicao SEM 'Nome:' e nome sanitizado pre-preenchido."""
+    t, store = team
+    await _signal_handle_push(
+        t, "quero comprar 2 potes, pode mandar o pix", "pn2", push_name="MARIA silva"
+    )
+    reply = await _signal_handle_push(t, "sim, pode", "pn2")
+    assert "Nome:" not in reply  # nao pede o nome de novo
+    assert "Maria Silva" in reply
+    assert "CPF:" in reply and "CEP:" in reply
+    assert store["pn2"]["checkout"]["active"] is True
+    assert store["pn2"]["checkout"]["fields"]["name"] == "Maria Silva"
+    assert store["pn2"]["name_confirmed"] is True
+
+
+@pytest.mark.asyncio
+async def test_pushname_confirmed_name_goes_to_asaas(team, _mock_viacep, _mock_pix):
+    """AC-4: o nome cobrado no Asaas e o CONFIRMADO (pushName), nao o que vier no form."""
+    t, store = team
+    await _signal_handle_push(
+        t, "quero comprar 2 potes, pode mandar o pix", "pn3", push_name="joao pedro"
+    )
+    await _signal_handle_push(t, "isso mesmo", "pn3")
+    # cliente manda CPF/CEP/Numero (form sem Nome); mesmo se mandar outro nome,
+    # o confirmado prevalece (merge nunca sobrescreve campo ja coletado).
+    reply = await _signal_handle_push(
+        t, "Nome: Fulano Trocado\nCPF: 529.982.247-25\nCEP: 01001-000\nNumero: 930", "pn3"
+    )
+    assert reply == "Pix copia e cola: 00020126XYZ"
+    assert _mock_pix["customer_name"] == "Joao Pedro"
+
+
+@pytest.mark.asyncio
+async def test_ctwa_null_pushname_falls_back_to_asking_name(team):
+    """AC-2: lead CTWA/@lid (pushName vazio) cai no fluxo de pedir o nome, sem erro."""
+    t, store = team
+    reply = await _signal_handle_push(
+        t, "quero comprar 2 potes, pode mandar o pix", "pn4", push_name=""
+    )
+    assert "Nome:" in reply  # formulario normal pedindo o nome
+    assert store["pn4"]["checkout"]["active"] is True
+    assert "push_name" not in store["pn4"]
+
+
+@pytest.mark.asyncio
+async def test_pushname_emoji_only_falls_back_to_asking_name(team):
+    """AC-2/AC-3: pushName so com emoji sanitiza para "" -> pede o nome normalmente."""
+    t, store = team
+    reply = await _signal_handle_push(
+        t, "quero comprar 2 potes, pode mandar o pix", "pn5", push_name="🌸✨"
+    )
+    assert "Nome:" in reply
+    assert "push_name" not in store["pn5"]
+
+
+@pytest.mark.asyncio
+async def test_pushname_rejected_asks_for_name(team):
+    """AC-1: cliente recusa o nome proposto -> formulario pede o nome (sem autofill)."""
+    t, store = team
+    await _signal_handle_push(
+        t, "quero comprar 2 potes, pode mandar o pix", "pn6", push_name="joao pedro"
+    )
+    reply = await _signal_handle_push(t, "nao, prefiro outro nome", "pn6")
+    assert "Nome:" in reply
+    assert store["pn6"]["checkout"]["active"] is True
+    assert store["pn6"]["checkout"]["fields"].get("name") in (None, "")

@@ -56,11 +56,106 @@ _FIELD_LABELS_PT = {
     "state": "UF (estado)",
 }
 
+# ---------------------------------------------------------------------------
+# pushName (story-068): sanitizacao + confirmacao de nome declarativo
+# ---------------------------------------------------------------------------
+
+# Conectores que NAO levam inicial maiuscula em nome proprio PT-BR.
+_NAME_CONNECTORS = frozenset({"de", "da", "do", "das", "dos", "e"})
+
+
+def _capitalize_segments(word: str) -> str:
+    """Capitaliza a 1a letra de cada segmento de letras (separados por ``-``/``'``),
+    minusculizando o resto. Cobre nomes compostos: 'Ana-Clara', \"D'Avila\"."""
+    return re.sub(
+        r"[^\W\d_]+",
+        lambda m: m.group(0)[:1].upper() + m.group(0)[1:].lower(),
+        word,
+        flags=re.UNICODE,
+    )
+
+
+def _title_case_name(text: str) -> str:
+    """Title Case PT-BR: capitaliza cada palavra (e cada segmento de nome composto),
+    mas mantem conectores em caixa baixa (exceto se forem a primeira palavra)."""
+    words = text.split()
+    out: list[str] = []
+    for i, word in enumerate(words):
+        lower = word.lower()
+        if i > 0 and lower in _NAME_CONNECTORS:
+            out.append(lower)
+        else:
+            out.append(_capitalize_segments(word))
+    return " ".join(out)
+
+
+def sanitize_name(raw: str) -> str:
+    """Sanitiza um nome declarativo (ex.: ``pushName`` do WhatsApp) para exibicao
+    e para uso em cobranca (story-068).
+
+    - remove emojis/simbolos e caracteres de controle (``str.isalpha`` e
+      unicode-aware: cobre acentos e descarta emoji/pictograma/digito);
+    - mantem apenas letras, espacos e a pontuacao tipica de nome (``- ' .``);
+    - colapsa espacos, apara e normaliza a caixa (Title Case PT-BR).
+
+    Retorna ``""`` quando nada utilizavel sobra (ex.: nome so de emoji/numero) —
+    o caller cai no fluxo de pedir o nome.
+    """
+    if not raw:
+        return ""
+    cleaned = "".join(
+        ch if (ch.isalpha() or ch.isspace() or ch in "-'.") else " "
+        for ch in raw
+    )
+    text = re.sub(r"\s+", " ", cleaned).strip(" .-'")
+    if not text or not any(ch.isalpha() for ch in text):
+        return ""
+    return _title_case_name(text)
+
+
+# Confirmacao do nome pre-preenchido: aceita o "sim" em varias formas. Se houver
+# qualquer marca de negacao, NAO conta como confirmacao (cliente quer outro nome).
+_NAME_NEGATIVE_RE = re.compile(
+    r"\b(n[aã]o|nops?|negativ[oa]|errad[oa]|outr[oa]|muda(?:r)?|troca(?:r)?|nem)\b",
+    re.IGNORECASE,
+)
+_NAME_AFFIRMATIVE_RE = re.compile(
+    r"\b(sim|isso|pode|claro|perfeito|exat[oa]|exatamente|correto|cert[oa]|"
+    r"confirm[oa]|confirmad[oa]|ok|okay|blz|beleza|positivo|aham|uhum|aprovo|"
+    r"manda|registra(?:r)?|esse(?:\s+mesmo)?|sou\s+eu)\b",
+    re.IGNORECASE,
+)
+
+
+def is_affirmative_name_confirmation(text: str) -> bool:
+    """True se ``text`` confirma o nome proposto (sem negacao). Conservador: na
+    duvida retorna False e o fluxo segue pedindo/confirmando o nome."""
+    value = (text or "").strip()
+    if not value:
+        return False
+    if _NAME_NEGATIVE_RE.search(value):
+        return False
+    return bool(_NAME_AFFIRMATIVE_RE.search(value))
+
+
+def build_name_confirm_message(push_name: str) -> str:
+    """Pergunta de 1 toque confirmando o nome trazido pelo WhatsApp (story-068)."""
+    name = (push_name or "").strip()
+    return (
+        f"Posso registrar o pedido em nome de *{name}*? "
+        "(se preferir outro nome, e so me dizer)"
+    )
+
+
 # Mensagem de transicao: o LLM emite isto ao entrar em modo checkout. Modelo
 # rotulado = maxima precisao de parsing sem tela.
 
 
-def build_transition_message(quantity: int = 1, billing_type: str = "PIX") -> str:
+def build_transition_message(
+    quantity: int = 1,
+    billing_type: str = "PIX",
+    known_name: str = "",
+) -> str:
     """Mensagem de transicao para o modo checkout, confirmando a quantidade.
 
     Story-041 HIGH-2: confirmar a quantidade aqui da ao cliente a chance de
@@ -69,6 +164,9 @@ def build_transition_message(quantity: int = 1, billing_type: str = "PIX") -> st
 
     Story-042: a mesma coleta serve para Pix e cartao; so muda a palavra do meio
     ("Pix" vs "link de pagamento no cartao") para alinhar a expectativa.
+
+    Story-068: quando ``known_name`` ja foi confirmado (via ``pushName``), o
+    formulario OMITE a linha ``Nome:`` — pede so o que falta (CPF/CEP/Numero).
     """
     qty = max(1, int(quantity or 1))
     unit = "pote" if qty == 1 else "potes"
@@ -77,6 +175,16 @@ def build_transition_message(quantity: int = 1, billing_type: str = "PIX") -> st
         if (billing_type or "PIX").upper() == "CREDIT_CARD"
         else "Pix"
     )
+    name = (known_name or "").strip()
+    if name:
+        return (
+            f"Perfeito! Vou gerar seu {meio} de {qty} {unit} em nome de *{name}*. "
+            "Pra sair certinho e sem erro, me manda assim (pode copiar e preencher):"
+            "\n\n"
+            "CPF: \n"
+            "CEP: \n"
+            "Numero: "
+        )
     return (
         f"Perfeito! Vou gerar seu {meio} de {qty} {unit}. Pra sair certinho e sem "
         "erro, me manda assim (pode copiar e preencher):\n\n"
@@ -370,7 +478,7 @@ def build_reply(pending: list[str], invalid: list[str]) -> str:
             parts.append(
                 "o CPF informado nao parece valido, pode conferir os numeros?"
             )
-            invalid_labels = [l for l in invalid_labels if l != "CPF"]
+            invalid_labels = [label for label in invalid_labels if label != "CPF"]
         if invalid_labels:
             parts.append(f"o campo {_join_pt(invalid_labels)} ficou invalido")
     if pending:

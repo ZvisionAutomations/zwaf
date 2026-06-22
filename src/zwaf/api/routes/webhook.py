@@ -42,7 +42,9 @@ def _extract_message(payload: dict) -> tuple[str, str, str]:
         return "", "", ""
 
     phone = key.get("remoteJid", "").split("@")[0]
-    push_name = data.get("pushName", phone)
+    # Story-068: pushName ausente (lead CTWA/@lid de anuncio Meta) -> "" e o
+    # checkout cai no fluxo de pedir o nome. NUNCA usar o telefone como nome.
+    push_name = data.get("pushName") or ""
 
     message = data.get("message", {})
     text = message.get("conversation", "")
@@ -62,7 +64,9 @@ def _extract_audio_message(payload: dict) -> tuple[str, dict[str, Any], dict[str
         return "", {}, {}, ""
 
     phone = key.get("remoteJid", "").split("@")[0]
-    push_name = data.get("pushName", phone)
+    # Story-068: pushName ausente (lead CTWA/@lid de anuncio Meta) -> "" e o
+    # checkout cai no fluxo de pedir o nome. NUNCA usar o telefone como nome.
+    push_name = data.get("pushName") or ""
     message = data.get("message", {})
     try:
         from zwaf.audio.transcription import has_audio_message
@@ -124,7 +128,7 @@ async def receive_webhook(
         )
         raise HTTPException(status_code=403, detail="Invalid Evolution instance")
 
-    phone, text, _push_name = _extract_message(body)
+    phone, text, push_name = _extract_message(body)
 
     if phone and text:
         session_id = f"{tenant_id}_{phone}"
@@ -137,16 +141,20 @@ async def receive_webhook(
                 "phone_tail": _phone_tail(phone),
                 "text_length": len(text),
                 "instance": payload.instance,
+                # Story-068: nunca logar o pushName cru (PII) — so a presenca.
+                "has_push_name": bool(push_name),
             },
         )
 
         asyncio.create_task(
-            _process_and_respond(team, text, phone, session_id, lead_id, tenant_id)
+            _process_and_respond(
+                team, text, phone, session_id, lead_id, tenant_id, push_name
+            )
         )
 
         return {"status": "accepted"}
 
-    audio_phone, audio_message, message_key, _audio_push_name = _extract_audio_message(body)
+    audio_phone, audio_message, message_key, audio_push_name = _extract_audio_message(body)
     if audio_phone and audio_message:
         session_id = f"{tenant_id}_{audio_phone}"
         lead_id = audio_phone
@@ -166,13 +174,16 @@ async def receive_webhook(
             lead_id=lead_id,
             tenant_id=tenant_id,
             instance=payload.instance,
+            push_name=audio_push_name,
         )
         return {"status": "accepted"}
 
     return {"status": "ignored", "reason": "no_text_content"}
 
 
-async def _process_and_respond(team, message, phone, session_id, lead_id, tenant_id):
+async def _process_and_respond(
+    team, message, phone, session_id, lead_id, tenant_id, push_name: str = ""
+):
     """Processa a mensagem e envia a resposta via WhatsApp."""
     try:
         response = await team.process(
@@ -180,6 +191,7 @@ async def _process_and_respond(team, message, phone, session_id, lead_id, tenant
             phone=phone,
             session_id=session_id,
             lead_id=lead_id,
+            push_name=push_name,
         )
         logger.info(
             "Response generated",
@@ -234,6 +246,7 @@ async def _process_audio_and_respond(
     lead_id: str,
     tenant_id: str,
     instance: str,
+    push_name: str = "",
 ) -> None:
     """Transcribe supported audio and route the resulting text through the normal agent flow."""
     try:
@@ -313,6 +326,7 @@ async def _process_audio_and_respond(
             phone=phone,
             session_id=session_id,
             lead_id=lead_id,
+            push_name=push_name,
         )
         logger.info(
             "audio_agent_processed tenant=%s phone_tail=%s agent=%s response_length=%d latency_ms=%s",
