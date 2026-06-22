@@ -719,3 +719,29 @@ async def test_pushname_rejected_asks_for_name(team):
     assert "Nome:" in reply
     assert store["pn6"]["checkout"]["active"] is True
     assert store["pn6"]["checkout"]["fields"].get("name") in (None, "")
+
+
+@pytest.mark.asyncio
+async def test_pushname_encrypted_at_rest_in_session(team, _mock_viacep, _mock_pix, monkeypatch):
+    """story-068 hardening: pushName nao fica em texto claro no session store quando
+    ha Fernet key; round-trip ate o Pix preserva o nome confirmado."""
+    monkeypatch.setenv("ZWAF_PII_FERNET_KEY", Fernet.generate_key().decode())
+    t, store = team
+
+    # 1o turno: oferece a confirmacao -> pushName persistido (cifrado) em pending_checkout
+    await _signal_handle_push(
+        t, "quero comprar 2 potes, pode mandar o pix", "enc1", push_name="joao pedro"
+    )
+    raw = json.dumps(store["enc1"], ensure_ascii=False)
+    assert "Joao Pedro" not in raw  # nao vaza em texto claro
+    assert store["enc1"]["pending_checkout"][team_module.PUSH_NAME_ENCRYPTED_FLAG] is True
+
+    # confirma -> nome confirmado vai para fields (tambem cifrado) e gera o Pix
+    await _signal_handle_push(t, "sim, pode", "enc1")
+    raw2 = json.dumps(store["enc1"], ensure_ascii=False)
+    assert "Joao Pedro" not in raw2
+    reply = await _signal_handle_push(
+        t, "CPF: 529.982.247-25\nCEP: 01001-000\nNumero: 930", "enc1"
+    )
+    assert reply == "Pix copia e cola: 00020126XYZ"
+    assert _mock_pix["customer_name"] == "Joao Pedro"

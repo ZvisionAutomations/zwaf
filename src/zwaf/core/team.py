@@ -59,6 +59,10 @@ _SUMMARIZABLE_AGENTS = {"vendedor", "recompra", "suporte", "cobranca"}
 CHECKOUT_PAYMENT_LOCK_NAME = "checkout_pix"  # nome do lock mantido por compat. Redis
 CHECKOUT_PAYMENT_LOCK_TTL_SECONDS = 20
 CHECKOUT_FIELDS_ENCRYPTED_FLAG = "_pii_encrypted"
+# Story-068: o pushName e PII declarativa. Antes da confirmacao ele vive em
+# state["push_name"] e pending_checkout["push_name"] — cifrados em repouso no
+# session store com esta flag (mesma politica dos checkout fields da story-043).
+PUSH_NAME_ENCRYPTED_FLAG = "_push_name_encrypted"
 CHECKOUT_SENSITIVE_FIELDS = {
     "name",
     "document",
@@ -113,9 +117,33 @@ class TeamResponse:
     conversion_signal: Optional[LeadSignal] = None
 
 
+def _encrypt_push_name_in(container: dict[str, Any]) -> None:
+    """Cifra ``container['push_name']`` in place (idempotente via flag).
+    Story-068. Caller ja garantiu ``can_encrypt_pii()``."""
+    name = container.get("push_name")
+    if isinstance(name, str) and name and not container.get(PUSH_NAME_ENCRYPTED_FLAG):
+        container["push_name"] = encrypt_pii(name)
+        container[PUSH_NAME_ENCRYPTED_FLAG] = True
+
+
+def _decrypt_push_name_in(container: dict[str, Any]) -> None:
+    """Decifra ``container['push_name']`` in place quando marcado. Story-068."""
+    if not container.get(PUSH_NAME_ENCRYPTED_FLAG):
+        return
+    name = container.get("push_name")
+    if isinstance(name, str) and name and can_encrypt_pii():
+        container["push_name"] = decrypt_pii(name)
+    container.pop(PUSH_NAME_ENCRYPTED_FLAG, None)
+
+
 def _decrypt_checkout_state(state: dict[str, Any]) -> dict[str, Any]:
     """Return a session state copy with checkout fields decrypted when needed."""
     result = deepcopy(state or {})
+    # Story-068: pushName (topo + pending_checkout) decifrado antes de qualquer uso.
+    _decrypt_push_name_in(result)
+    pending = result.get("pending_checkout")
+    if isinstance(pending, dict):
+        _decrypt_push_name_in(pending)
     checkout = result.get("checkout")
     if not isinstance(checkout, dict):
         return result
@@ -140,6 +168,12 @@ def _encrypt_checkout_state(state: dict[str, Any]) -> dict[str, Any]:
     result = deepcopy(state or {})
     if not can_encrypt_pii():
         return result
+    # Story-068: cifra o pushName (topo + pending_checkout) — pode existir sem
+    # um checkout ativo (ex.: durante o prompt de quantidade/meio).
+    _encrypt_push_name_in(result)
+    pending = result.get("pending_checkout")
+    if isinstance(pending, dict):
+        _encrypt_push_name_in(pending)
     checkout = result.get("checkout")
     if not isinstance(checkout, dict):
         return result
