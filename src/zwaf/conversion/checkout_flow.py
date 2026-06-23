@@ -280,8 +280,8 @@ _NAME_STOPWORDS = frozenset({
 def _name_from_free_text(text: str) -> str:
     """Extrai um nome completo de texto livre (sem rotulo).
 
-    Caso real (Miguel): o cliente copia os valores do formulario mas NAO os
-    rotulos ("Miguel Augusto Oliveira" numa linha solta). Sem isso o nome nunca
+    Caso de dados sem rotulo: o cliente copia os valores do formulario mas NAO os
+    rotulos ("Joao Carlos Pereira" numa linha solta). Sem isso o nome nunca
     e capturado e o checkout entra em loop de "faltou nome completo".
 
     Heuristica conservadora: uma linha so de letras com 2+ palavras e sem
