@@ -14,6 +14,18 @@ logger = logging.getLogger("zwaf.reporting.daily_report")
 
 UNAVAILABLE = "indisponivel"
 
+# Story-076: idempotencia de envio por (grupo + dia). O scheduler e registrado POR TENANT
+# (api/main.py lifespan), cada um com seu proprio AsyncIOScheduler, mas todos usam o mesmo
+# REPORT_WA_GROUP_ID (env compartilhada). Sem guarda, o grupo recebe o relatorio N vezes
+# (uma por tenant), com poucos segundos de diferenca. Este registro garante 1 envio por
+# grupo/dia, independente de quantos tenants/schedulers disparam.
+_sent_reports_by_group: dict[str, str] = {}
+
+
+def reset_daily_report_dedupe() -> None:
+    """Limpa o registro de idempotencia do relatorio diario (uso em testes)."""
+    _sent_reports_by_group.clear()
+
 
 async def get_daily_metrics(conn: "asyncpg.Connection", tenant_id: str) -> dict:
     """
@@ -175,6 +187,18 @@ async def build_and_send_report(
         logger.warning("daily_report_whatsapp_tool_not_configured")
         return
 
+    # Story-076: 1 relatorio por grupo/dia. Reserva o slot ANTES do await para nao
+    # duplicar quando dois schedulers de tenants distintos disparam concorrentemente
+    # (mesmo event loop): o segundo encontra o grupo ja marcado e nao envia.
+    today = _today_brt()
+    if _sent_reports_by_group.get(group_id) == today:
+        logger.info(
+            "daily_report_skipped_duplicate group=%s date=%s tenant=%s",
+            group_id, today, tenant_id,
+        )
+        return
+    _sent_reports_by_group[group_id] = today
+
     try:
         await whatsapp_tool.send_message(
             phone=group_id,
@@ -182,4 +206,6 @@ async def build_and_send_report(
             session_id=f"daily_report_{tenant_id}",
         )
     except Exception as exc:
+        # Falhou: libera o slot para permitir uma nova tentativa no mesmo dia.
+        _sent_reports_by_group.pop(group_id, None)
         logger.warning("daily_report_whatsapp_send_failed: %s", exc)

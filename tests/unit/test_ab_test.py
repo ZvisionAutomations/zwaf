@@ -68,8 +68,11 @@ class ABTestVariantTests(unittest.TestCase):
         prompt_a = _load_prompt("livia-raiz-vital", "vendedor", variant="A")
         prompt_b = _load_prompt("livia-raiz-vital", "vendedor", variant="B")
 
-        self.assertIn("HIPOTESE UNICA", prompt_b)
+        # Story-078: variante B evoluiu para um bundle (protocolo, qualificacao, cross-sell).
+        self.assertIn("HIPOTESE (bundle", prompt_b)
         self.assertIn("Qual sintoma tem atrapalhado mais seu dia hoje", prompt_b)
+        self.assertIn("CROSS-SELL DO PARCEIRO", prompt_b)  # M6 — so na variante B
+        self.assertNotIn("CROSS-SELL DO PARCEIRO", prompt_a)  # baseline A inalterado
         self.assertNotEqual(prompt_a, prompt_b)
 
     def test_admin_ab_test_no_db_returns_empty(self) -> None:
