@@ -162,6 +162,87 @@ def test_extract_audio_message_ignores_from_me():
     assert (phone, message, key, push_name) == ("", {}, {}, "")
 
 
+def test_extracts_click_to_whatsapp_attribution():
+    from zwaf.memory.lead_attribution import extract_attribution
+
+    attribution = extract_attribution(
+        {
+            "data": {
+                "message": {
+                    "extendedTextMessage": {
+                        "text": "oi",
+                        "contextInfo": {
+                            "ctwa_clid": "clid_123",
+                            "externalAdReply": {
+                                "sourceId": "ad_123",
+                                "sourceType": "ad",
+                                "sourceUrl": "https://fb.me/x",
+                                "title": "Hook 01",
+                            },
+                        },
+                    }
+                }
+            }
+        },
+        tenant_id="livia-raiz-vital",
+        session_id="livia-raiz-vital_5511999990001",
+        phone="5511999990001",
+    )
+
+    assert attribution.has_signal is True
+    assert attribution.ctwa_clid == "clid_123"
+    assert attribution.source_id == "ad_123"
+    assert attribution.source_url == "https://fb.me/x"
+
+
+def test_text_webhook_records_attribution_first_touch(monkeypatch):
+    app = FastAPI()
+    app.state.teams = {"livia-raiz-vital": FakeTeam()}
+    app.include_router(webhook.router)
+    client = TestClient(app)
+    tasks = []
+
+    def fake_create_task(coro):
+        tasks.append(coro)
+        coro.close()
+        return None
+
+    async def fake_record(attribution):
+        return "inserted"
+
+    monkeypatch.setattr(webhook.asyncio, "create_task", fake_create_task)
+    monkeypatch.setattr(webhook, "record_lead_attribution", fake_record)
+
+    response = client.post(
+        "/livia-raiz-vital",
+        json={
+            "event": "messages.upsert",
+            "instance": "livia-test",
+            "data": {
+                "key": {
+                    "remoteJid": "5511999990001@s.whatsapp.net",
+                    "fromMe": False,
+                    "id": "msg-1",
+                },
+                "pushName": "Lead",
+                "message": {
+                    "extendedTextMessage": {
+                        "text": "oi",
+                        "contextInfo": {
+                            "ctwa_clid": "clid_123",
+                            "externalAdReply": {"sourceId": "ad_123"},
+                        },
+                    }
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    assert len(tasks) == 2
+
+
 def test_audio_webhook_processes_before_response(monkeypatch):
     app = FastAPI()
     app.state.teams = {"livia-raiz-vital": ProcessingTeam()}
