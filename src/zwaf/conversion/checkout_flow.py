@@ -170,9 +170,10 @@ def build_transition_message(
     """
     qty = max(1, int(quantity or 1))
     unit = "pote" if qty == 1 else "potes"
+    _bt = (billing_type or "PIX").upper()
     meio = (
-        "link de pagamento no cartao"
-        if (billing_type or "PIX").upper() == "CREDIT_CARD"
+        "link de pagamento no cartao" if _bt == "CREDIT_CARD"
+        else "boleto" if _bt == "BOLETO"  # story-069
         else "Pix"
     )
     name = (known_name or "").strip()

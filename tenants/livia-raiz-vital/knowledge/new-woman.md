@@ -84,7 +84,7 @@ Preco por pote no Pix (quanto mais potes, mais barato o pote):
 | 2 a 4 potes | R$ 128,00 cada |
 | 5 potes ou mais | R$ 119,90 cada |
 
-- No cartao de credito, cerca de 10% a mais que no Pix.
+- No cartao de credito o valor e o mesmo do Pix; a diferenca e que da para parcelar.
 - Frete gratis para todos os pedidos no momento (sem minimo).
 - Frete via Melhor Envio ou Super Frete
 - Prazo de entrega: Sudeste 3-5 dias uteis | Sul/CO 5-7 | Norte/Nordeste 7-10

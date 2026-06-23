@@ -204,7 +204,7 @@ def make_payment_link_generator(
                         quantity=resolved_qty,
                         price_cents=price_cents,
                         billing_type=resolved_billing_type,
-                        due_days=int(cfg.get("due_days", 2)),
+                        due_days=_resolve_due_days(cfg, resolved_billing_type),
                         callback=callback,
                     ),
                 )
@@ -231,6 +231,32 @@ def make_payment_link_generator(
                         )
                         return _pix_message(payload, price_cents)
                     logger.error("Asaas returned no Pix payload for payment %s", payment_id)
+                    await _release_failed_reservation(order_id)
+                    return _MSG_GENERIC_ERROR
+
+                # Boleto (story-069): entrega linha digitavel (copia-e-cola) + PDF +
+                # vencimento no chat. A linha digitavel pode exigir a 2a chamada
+                # GET /payments/{id}/identificationField (igual ao Pix).
+                if resolved_billing_type == "BOLETO":
+                    line_code = str(data.get("identificationField") or "")
+                    if not line_code:
+                        try:
+                            line_code = await _fetch_boleto_identification(client, asaas, payment_id)
+                        except Exception as exc:  # noqa: BLE001 — fallback resiliente
+                            logger.error("Asaas boleto identificationField fetch failed: %s", exc)
+                            line_code = ""
+                    pdf_url = str(data.get("bankSlipUrl") or _extract_payment_url(data))
+                    if pdf_url:
+                        await mark_order_payment_created(
+                            order_id=order_id,
+                            asaas_customer_id=customer_id,
+                            asaas_payment_id=payment_id,
+                            payment_url=pdf_url,
+                        )
+                        return _boleto_message(
+                            line_code, pdf_url, str(data.get("dueDate") or ""), price_cents
+                        )
+                    logger.error("Asaas returned no boleto URL for payment %s", payment_id)
                     await _release_failed_reservation(order_id)
                     return _MSG_GENERIC_ERROR
 
@@ -579,6 +605,19 @@ def _resolve_price_cents(product_cfg: dict[str, Any], billing_type: str) -> Opti
     return product_cfg.get("price_cents_pix")
 
 
+def _resolve_due_days(payment_config: dict[str, Any], billing_type: str) -> int:
+    """Janela de vencimento (em dias) por meio de pagamento.
+
+    Story-069: BOLETO vence em D+1 (~24h) por padrao; demais meios usam `due_days`
+    (default 2). Configuravel por tenant via `boleto_due_days` / `due_days`, sem
+    hardcode. Nunca negativo — Asaas rejeita `dueDate` anterior a hoje
+    (`invalid_dueDate`).
+    """
+    if billing_type == "BOLETO":
+        return max(0, int(payment_config.get("boleto_due_days", 1)))
+    return max(0, int(payment_config.get("due_days", 2)))
+
+
 def _extract_payment_url(data: dict[str, Any]) -> str:
     for key in ("link", "invoiceUrl", "bankSlipUrl", "url", "transactionReceiptUrl"):
         value = data.get(key)
@@ -608,6 +647,36 @@ async def _fetch_pix_copy_paste(
     return str(data.get("payload") or "")
 
 
+async def _fetch_boleto_identification(
+    client: httpx.AsyncClient,
+    config: dict[str, str],
+    payment_id: str,
+) -> str:
+    """Busca a linha digitavel do boleto (Asaas GET /payments/{id}/identificationField).
+
+    O POST /payments com billingType=BOLETO pode nao trazer a linha digitavel no
+    corpo; esta 2a chamada garante o campo `identificationField` (story-069),
+    espelhando `_fetch_pix_copy_paste`.
+    """
+    if not payment_id:
+        return ""
+    resp = await client.get(
+        f"{config['base_url']}/payments/{payment_id}/identificationField",
+        headers=_asaas_headers(config),
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return str(data.get("identificationField") or "")
+
+
+def _format_due_date_br(due_date_iso: str) -> str:
+    """'2026-06-23' -> '23/06/2026'. Retorna '' se nao parsear."""
+    try:
+        return date.fromisoformat(due_date_iso).strftime("%d/%m/%Y")
+    except (ValueError, TypeError):
+        return ""
+
+
 def _format_brl(price_cents: int) -> str:
     """123 -> 'R$ 1,23'; 119900 -> 'R$ 1.199,00'."""
     formatted = f"{price_cents / 100:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -633,6 +702,34 @@ def _pix_message(payload: str, price_cents: int) -> str:
         "Assim que o pagamento cair, eu te confirmo por aqui. \U0001f447"
     )
     return f"{intro}{MESSAGE_SPLIT}{payload}"
+
+
+def _boleto_message(line_code: str, pdf_url: str, due_date_iso: str, price_cents: int) -> str:
+    """Boleto no chat (story-069): linha digitavel (copia-e-cola) + PDF + vencimento.
+
+    Com a linha digitavel, envia em DUAS mensagens (anuncio + linha PURA), igual ao
+    Pix, para o cliente copiar so o codigo. Sem a linha (fetch falhou), cai para o
+    PDF em mensagem unica. Sempre comunica o vencimento e o aviso de antecedencia:
+    a compensacao pode passar de 24h; o que vale e PAGAR ate o vencimento.
+    """
+    venc = _format_due_date_br(due_date_iso)
+    venc_frase = f" com vencimento em {venc}" if venc else " com vencimento em ~24h"
+    aviso = (
+        "Pague com pelo menos 1 dia de antecedencia: o boleto pode levar algumas horas "
+        "para compensar, e o que vale e pagar ate o vencimento. Assim que cair, te confirmo por aqui."
+    )
+    if line_code:
+        intro = (
+            f"Prontinho! Gerei seu boleto de {_format_brl(price_cents)}{venc_frase}. "
+            f"O PDF esta aqui: {pdf_url}\n\n"
+            "Vou te mandar a linha digitavel na proxima mensagem (e so copiar e pagar no app do "
+            f"banco). {aviso}"
+        )
+        return f"{intro}{MESSAGE_SPLIT}{line_code}"
+    return (
+        f"Prontinho! Gerei seu boleto de {_format_brl(price_cents)}{venc_frase}. "
+        f"Acesse o boleto (com a linha digitavel) aqui: {pdf_url}\n\n{aviso}"
+    )
 
 
 def _card_message(url: str, price_cents: int) -> str:

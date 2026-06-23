@@ -40,13 +40,14 @@
     "completion_url": "${ASAAS_COMPLETION_URL}",
     "default_customer_cpf_cnpj": "${ASAAS_DEFAULT_CUSTOMER_CPF_CNPJ}",
     "billing_type": "PIX",
+    "boleto_due_days": 1,
     "_card_callback_note": "Ligar card_callback_enabled SO depois de cadastrar um dominio/site em Minha Conta > Informacoes no Asaas. Sem dominio, o callback.successUrl causa HTTP 400 e quebra o cartao.",
     "card_callback_enabled": false,
     "products": {
       "new-woman": {
         "product_id": "nw-001",
         "pricing_model": "tiered_unit",
-        "card_markup_pct": 10,
+        "card_markup_pct": 0,
         "unit_price_tiers_pix_cents": [
           {"min_qty": 1, "max_qty": 1, "unit_cents": 14900},
           {"min_qty": 2, "max_qty": 4, "unit_cents": 12800},

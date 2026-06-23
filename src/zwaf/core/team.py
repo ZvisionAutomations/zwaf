@@ -104,6 +104,7 @@ _NUM_TOKEN_RE = re.compile(rf"\b({_NUM_TOKEN})\b", re.IGNORECASE)
 # Cartao/parcelar -> CREDIT_CARD; pix -> PIX. Default e PIX (maior conversao).
 _CARD_RE = re.compile(r"\b(cart[aã]o|cr[eé]dito|parcel)", re.IGNORECASE)
 _PIX_RE = re.compile(r"\bpix\b", re.IGNORECASE)
+_BOLETO_RE = re.compile(r"\bbolet[oa]s?\b", re.IGNORECASE)  # story-069
 
 
 @dataclass
@@ -1257,14 +1258,20 @@ class ZWAFTeam:
 
     def _billing_question_message(self) -> str:
         return (
-            "Perfeito! E qual a melhor forma pra voce: cartao de credito ou Pix? "
-            "(No Pix o valor e o melhor; no cartao da pra parcelar.)"
+            "Perfeito! E qual a melhor forma pra voce: Pix, cartao de credito ou boleto? "
+            "(No Pix o valor e o melhor e cai na hora; no cartao da pra parcelar; "
+            "o boleto vence em 24h.)"
         )
 
     def _reconfirm_total_message(self, checkout: dict) -> str:
         qty = int(checkout.get("quantity", 1) or 1)
         unidade = "pote" if qty == 1 else "potes"
-        meio = "no cartao" if checkout.get("billing_type") == "CREDIT_CARD" else "no Pix"
+        _bt = checkout.get("billing_type")
+        meio = (
+            "no cartao" if _bt == "CREDIT_CARD"
+            else "no boleto" if _bt == "BOLETO"
+            else "no Pix"
+        )
         total = self._order_total_cents(checkout)
         if total:
             return f"Anotado! Fechamos {qty} {unidade} = {_format_brl(total)} {meio}."
@@ -1336,14 +1343,17 @@ def _extract_quantity(message: str) -> int:
 def _detect_billing_type(message: str) -> Optional[str]:
     """Meio de pagamento explicito na mensagem, ou None se ausente (story-042).
 
-    "cartao"/"credito"/"parcelar" -> CREDIT_CARD; "pix" -> PIX. Distingue
-    "nao mencionou" (None, mantem o default/lembrado) de uma escolha explicita,
-    espelhando `_quantity_in_message`. Cartao tem prioridade quando ambos
-    aparecem (ex.: "nao quero pix, prefiro cartao").
+    "cartao"/"credito"/"parcelar" -> CREDIT_CARD; "boleto" -> BOLETO; "pix" -> PIX.
+    Distingue "nao mencionou" (None, mantem o default/lembrado) de uma escolha
+    explicita, espelhando `_quantity_in_message`. Cartao tem prioridade quando ha
+    ambiguidade (ex.: "nao quero pix, prefiro cartao"); boleto vem antes do Pix
+    porque e a escolha mais explicita quando a palavra aparece (story-069).
     """
     text = message or ""
     if _CARD_RE.search(text):
         return "CREDIT_CARD"
+    if _BOLETO_RE.search(text):
+        return "BOLETO"
     if _PIX_RE.search(text):
         return "PIX"
     return None
