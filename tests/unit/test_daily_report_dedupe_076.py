@@ -92,3 +92,76 @@ async def test_new_day_sends_again(monkeypatch):
     monkeypatch.setattr(daily_report, "_today_brt", lambda: "02/01/2026")
     await build_and_send_report(db_url=None, tenant_id="t1", whatsapp_tool=wa, group_id=GROUP)
     assert len(wa.sends) == 2
+
+
+class _FakePG:
+    """asyncpg fake com claim atomico em memoria, compartilhado entre 'workers'."""
+    def __init__(self, claimed: set):
+        self._claimed = claimed
+
+    async def fetchval(self, query, *args):
+        # Simula o INSERT ... ON CONFLICT DO NOTHING RETURNING 1 da migration 011.
+        if query.strip().upper().startswith("INSERT INTO DAILY_REPORT_SENT"):
+            key = (args[0], args[1])
+            if key in self._claimed:
+                return None          # conflito: outro worker ja reservou
+            self._claimed.add(key)
+            return 1                 # ganhou o slot
+        # metricas: db indisponivel nesse fake -> deixa cair no _unavailable_metrics
+        raise RuntimeError("metrics not mocked")
+
+    async def execute(self, query, *args):
+        if query.strip().upper().startswith("DELETE FROM DAILY_REPORT_SENT"):
+            self._claimed.discard((args[0], args[1]))
+
+    async def close(self):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_two_workers_db_claim_sends_once(monkeypatch):
+    """FIX correto: com db_url, o claim atomico no banco evita duplicata entre WORKERS
+    (processos distintos). A guarda in-process nao cobriria esse caso."""
+    claimed: set = set()
+
+    async def fake_connect(dsn):
+        return _FakePG(claimed)
+
+    import asyncpg
+    monkeypatch.setattr(asyncpg, "connect", fake_connect)
+
+    wa = FakeWhatsApp()
+    # Dois "workers" (processos) disparam o relatorio para o mesmo grupo/dia.
+    await build_and_send_report(db_url="postgresql://x", tenant_id="livia-raiz-vital", whatsapp_tool=wa, group_id=GROUP)
+    await build_and_send_report(db_url="postgresql://x", tenant_id="livia-raiz-vital", whatsapp_tool=wa, group_id=GROUP)
+    assert len(wa.sends) == 1
+    assert (GROUP, daily_report._today_brt()) in claimed
+
+
+@pytest.mark.asyncio
+async def test_db_claim_released_on_send_failure(monkeypatch):
+    """Se o envio falhar, o slot no banco e liberado para retry no mesmo dia."""
+    claimed: set = set()
+
+    async def fake_connect(dsn):
+        return _FakePG(claimed)
+
+    import asyncpg
+    monkeypatch.setattr(asyncpg, "connect", fake_connect)
+
+    class FailingWA:
+        def __init__(self):
+            self.calls = 0
+            self.sends = []
+
+        async def send_message(self, *, phone, text, session_id):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("network down")
+            self.sends.append(phone)
+
+    wa = FailingWA()
+    await build_and_send_report(db_url="postgresql://x", tenant_id="t1", whatsapp_tool=wa, group_id=GROUP)
+    assert wa.sends == [] and claimed == set()  # falhou e liberou o slot
+    await build_and_send_report(db_url="postgresql://x", tenant_id="t1", whatsapp_tool=wa, group_id=GROUP)
+    assert wa.sends == [GROUP]  # retry no mesmo dia funciona

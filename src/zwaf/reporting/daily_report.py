@@ -14,17 +14,63 @@ logger = logging.getLogger("zwaf.reporting.daily_report")
 
 UNAVAILABLE = "indisponivel"
 
-# Story-076: idempotencia de envio por (grupo + dia). O scheduler e registrado POR TENANT
-# (api/main.py lifespan), cada um com seu proprio AsyncIOScheduler, mas todos usam o mesmo
-# REPORT_WA_GROUP_ID (env compartilhada). Sem guarda, o grupo recebe o relatorio N vezes
-# (uma por tenant), com poucos segundos de diferenca. Este registro garante 1 envio por
-# grupo/dia, independente de quantos tenants/schedulers disparam.
+# Story-076: idempotencia de envio por (grupo + dia). Duas fontes de duplicacao em prod:
+# (1) o scheduler e registrado POR TENANT (api/main.py lifespan); (2) o container roda com
+# uvicorn --workers 2, entao CADA worker executa o lifespan e registra seu proprio scheduler.
+# A guarda in-process abaixo so cobre o mesmo processo (multi-tenant); para cobrir os WORKERS
+# (processos distintos) e restarts, usamos um claim ATOMICO no banco (daily_report_sent,
+# migration 011). Com db_url, o banco e a fonte de verdade; sem db_url (testes/degradado),
+# cai na guarda in-process.
 _sent_reports_by_group: dict[str, str] = {}
 
 
 def reset_daily_report_dedupe() -> None:
-    """Limpa o registro de idempotencia do relatorio diario (uso em testes)."""
+    """Limpa o registro in-process de idempotencia do relatorio diario (uso em testes)."""
     _sent_reports_by_group.clear()
+
+
+async def _claim_daily_report_slot(db_url: str, group_id: str, report_date: str) -> bool:
+    """Reserva atomica do envio (grupo+dia) no banco. True se ESTE processo ganhou o slot
+    (deve enviar); False se outro worker ja reservou. Cobre multi-worker e restart.
+
+    Degrada para True se o banco estiver indisponivel: melhor arriscar 1-2 envios do que
+    silenciar o relatorio por falha de infra.
+    """
+    try:
+        import asyncpg
+
+        conn = await asyncpg.connect(_clean_asyncpg_url(db_url))
+        try:
+            won = await conn.fetchval(
+                "INSERT INTO daily_report_sent (group_id, report_date) VALUES ($1, $2) "
+                "ON CONFLICT (group_id, report_date) DO NOTHING RETURNING 1",
+                group_id,
+                report_date,
+            )
+            return won is not None
+        finally:
+            await conn.close()
+    except Exception as exc:
+        logger.warning("daily_report_claim_db_unavailable: %s", exc)
+        return True
+
+
+async def _release_daily_report_slot(db_url: str, group_id: str, report_date: str) -> None:
+    """Libera o slot reservado (usado quando o envio falha, para permitir retry)."""
+    try:
+        import asyncpg
+
+        conn = await asyncpg.connect(_clean_asyncpg_url(db_url))
+        try:
+            await conn.execute(
+                "DELETE FROM daily_report_sent WHERE group_id = $1 AND report_date = $2",
+                group_id,
+                report_date,
+            )
+        finally:
+            await conn.close()
+    except Exception as exc:
+        logger.warning("daily_report_release_db_unavailable: %s", exc)
 
 
 async def get_daily_metrics(conn: "asyncpg.Connection", tenant_id: str) -> dict:
@@ -187,17 +233,26 @@ async def build_and_send_report(
         logger.warning("daily_report_whatsapp_tool_not_configured")
         return
 
-    # Story-076: 1 relatorio por grupo/dia. Reserva o slot ANTES do await para nao
-    # duplicar quando dois schedulers de tenants distintos disparam concorrentemente
-    # (mesmo event loop): o segundo encontra o grupo ja marcado e nao envia.
+    # Story-076: 1 relatorio por grupo/dia. Com db_url, o claim atomico no banco cobre os
+    # 2 workers uvicorn e restarts (fonte de verdade). Sem db_url (testes/degradado), usa a
+    # guarda in-process, reservando ANTES do await para nao duplicar com tenants concorrentes
+    # no mesmo event loop.
     today = _today_brt()
-    if _sent_reports_by_group.get(group_id) == today:
-        logger.info(
-            "daily_report_skipped_duplicate group=%s date=%s tenant=%s",
-            group_id, today, tenant_id,
-        )
-        return
-    _sent_reports_by_group[group_id] = today
+    if db_url:
+        if not await _claim_daily_report_slot(db_url, group_id, today):
+            logger.info(
+                "daily_report_skipped_duplicate_db group=%s date=%s tenant=%s",
+                group_id, today, tenant_id,
+            )
+            return
+    else:
+        if _sent_reports_by_group.get(group_id) == today:
+            logger.info(
+                "daily_report_skipped_duplicate group=%s date=%s tenant=%s",
+                group_id, today, tenant_id,
+            )
+            return
+        _sent_reports_by_group[group_id] = today
 
     try:
         await whatsapp_tool.send_message(
@@ -206,6 +261,9 @@ async def build_and_send_report(
             session_id=f"daily_report_{tenant_id}",
         )
     except Exception as exc:
-        # Falhou: libera o slot para permitir uma nova tentativa no mesmo dia.
-        _sent_reports_by_group.pop(group_id, None)
+        # Falhou: libera o slot (banco ou in-process) para permitir nova tentativa no dia.
+        if db_url:
+            await _release_daily_report_slot(db_url, group_id, today)
+        else:
+            _sent_reports_by_group.pop(group_id, None)
         logger.warning("daily_report_whatsapp_send_failed: %s", exc)
