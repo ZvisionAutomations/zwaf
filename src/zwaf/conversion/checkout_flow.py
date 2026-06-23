@@ -334,6 +334,93 @@ def _number_from_unlabeled_lines(text: str, labeled: dict[str, str]) -> dict[str
     return {}
 
 
+# story-074 BUG-1: extracao de street/district/city/state de texto livre
+# NAO-rotulado. Fallback para quando o ViaCEP nao resolve: sem isto, mesmo o
+# cliente tendo escrito rua/bairro/cidade/UF, o checkout pedia esses campos em
+# LOOP porque o parser nunca os populava. ViaCEP segue fonte de verdade (FR-5).
+_UF_SET = frozenset({
+    "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS",
+    "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC",
+    "SP", "SE", "TO",
+})
+# Linha que abre com prefixo de logradouro (rua/av/travessa/...).
+_LOGRADOURO_RE = re.compile(
+    r"^(?:rua|r|avenida|av|travessa|tv|alameda|al|rodovia|rod|estrada|estr|"
+    r"pra[cç]a|praca|largo|viela|quadra|via|servid[aã]o)\b\.?\s+\S",
+    re.IGNORECASE,
+)
+# UF de 2 letras no fim da linha ("Sao Paulo - SP", "Sao Paulo/SP", "Sao Paulo SP").
+_TRAILING_UF_RE = re.compile(r"[\s,/\-]+([A-Za-z]{2})\s*$")
+# Cauda de numero da casa numa linha de logradouro ("Rua X 930" -> "Rua X").
+_HOUSE_NUMBER_TAIL_RE = re.compile(r"[\s,]+n?[ºo°.]?\s*\d{1,6}\b.*$", re.IGNORECASE)
+
+
+def _address_parts_from_free_text(text: str, labeled: dict[str, str]) -> dict[str, str]:
+    """Extrai street/district/city/state de texto livre (story-074 BUG-1).
+
+    Heuristica conservadora, linha a linha, ignorando as linhas de nome/CPF/CEP/
+    rotuladas:
+    - ``street``: linha que abre com prefixo de logradouro (sem a cauda do numero);
+    - ``state``: token de 2 letras que e uma UF valida (isolado ou no fim da linha);
+    - ``district``/``city``: linhas textuais restantes (1a -> bairro, ultima -> cidade).
+
+    Nunca sobrescreve um campo ja rotulado. So preenche o que faltou — alimenta o
+    fallback de ``advance_checkout`` quando o ViaCEP nao resolve.
+    """
+    result: dict[str, str] = {}
+    name = (labeled.get("name") or _name_from_free_text(text)).strip()
+    doc_digits = only_digits(labeled.get("document", "")) or only_digits(
+        _document_from_free_text(text)
+    )
+    cep_digits = only_digits(labeled.get("postal_code", "")) or only_digits(
+        parse_free_text_address(text).get("postal_code", "")
+    )
+    label_patterns = list(_LABEL_PATTERNS.values())
+    leftover: list[str] = []
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if any(pattern.search(line) for pattern in label_patterns):
+            continue  # linha rotulada — tratada pelo parse rotulado
+        if name and line == name:
+            continue
+        line_digits = only_digits(line)
+        is_logradouro = bool(_LOGRADOURO_RE.match(line))
+        if doc_digits and doc_digits in line_digits and not is_logradouro:
+            continue  # linha do CPF
+        if is_logradouro:
+            street = _HOUSE_NUMBER_TAIL_RE.sub("", line).strip(" ,.-")
+            if street:
+                result.setdefault("street", street)
+            continue
+        if len(cep_digits) == 8 and cep_digits in line_digits:
+            continue  # linha do CEP
+        if line.upper() in _UF_SET:
+            result.setdefault("state", line.upper())
+            continue
+        match = _TRAILING_UF_RE.search(line)
+        if match and match.group(1).upper() in _UF_SET:
+            result.setdefault("state", match.group(1).upper())
+            line = line[: match.start()].strip(" ,/-")
+        if not line or not any(ch.isalpha() for ch in line):
+            continue
+        leftover.append(line)
+    # So infere bairro/cidade quando a mensagem REALMENTE parece um endereco
+    # (tem CEP, logradouro ou UF) — evita que chatter solto ("obrigada!", uma
+    # pergunta) vire cidade/bairro no estado do checkout.
+    has_address_signal = (
+        len(cep_digits) == 8 or "street" in result or "state" in result
+    )
+    if leftover and has_address_signal:
+        if len(leftover) == 1:
+            result.setdefault("city", leftover[0])
+        else:
+            result.setdefault("district", leftover[0])
+            result.setdefault("city", leftover[-1])
+    return result
+
+
 def parse_message(text: str) -> dict[str, str]:
     """Extrai campos de uma mensagem.
 
@@ -362,6 +449,11 @@ def parse_message(text: str) -> dict[str, str]:
                 labeled["number"] = recovered["number"]
                 if recovered.get("complement") and not labeled.get("complement"):
                     labeled["complement"] = recovered["complement"]
+        # story-074 BUG-1: endereco escrito em linha solta (sem rotulo Rua:/Cidade:)
+        # popula street/district/city/state para o fallback (ViaCEP fonte de verdade).
+        for key, value in _address_parts_from_free_text(text, labeled).items():
+            if value and not labeled.get(key):
+                labeled[key] = value
         return labeled
 
     # Sem rotulos: parser de texto livre completo (story-040) + CPF + nome.
@@ -376,6 +468,10 @@ def parse_message(text: str) -> dict[str, str]:
     name = _name_from_free_text(text)
     if name:
         parsed["name"] = name
+    # story-074 BUG-1: street/district/city/state do texto livre nao-rotulado.
+    for key, value in _address_parts_from_free_text(text, parsed).items():
+        if value and not parsed.get(key):
+            parsed[key] = value
     return parsed
 
 
@@ -529,20 +625,73 @@ async def advance_checkout(
         timeout=viacep_timeout,
     )
 
-    # Se o ViaCEP nao resolveu rua/bairro/cidade/UF, pede esses campos (sem
-    # repedir CEP/numero, que ja temos).
-    addr_pending = [
-        f for f in ADDRESS_FALLBACK_FIELDS if not (resolved.get(f) or state.get(f))
-    ]
+    # story-074 BUG-1: quando o ViaCEP nao trouxe um campo de endereco mas o
+    # cliente o escreveu em texto livre (ja em state), usa o do cliente. So pede
+    # o que continuar faltando — sem repedir CEP/numero, que ja temos.
+    for f in ADDRESS_FALLBACK_FIELDS:
+        if state.get(f) and not resolved.get(f):
+            resolved[f] = state[f]
+
+    addr_pending = [f for f in ADDRESS_FALLBACK_FIELDS if not resolved.get(f)]
     if addr_pending:
-        for f in ADDRESS_FALLBACK_FIELDS:
-            if state.get(f) and not resolved.get(f):
-                resolved[f] = state[f]
-        still_pending = [f for f in ADDRESS_FALLBACK_FIELDS if not resolved.get(f)]
-        if still_pending:
-            reply = build_reply(still_pending, [])
-            return CheckoutTurn(
-                ready=False, collected=state, resolved_address=resolved, reply=reply
-            )
+        reply = build_reply(addr_pending, [])
+        return CheckoutTurn(
+            ready=False, collected=state, resolved_address=resolved, reply=reply
+        )
 
     return CheckoutTurn(ready=True, collected=state, resolved_address=resolved)
+
+
+# ---------------------------------------------------------------------------
+# story-073: pergunta/duvida durante a coleta de checkout
+# ---------------------------------------------------------------------------
+
+# Marcadores interrogativos fortes numa duvida de cliente durante a coleta.
+# Conservador de proposito: imperativos ambiguos ("pode mandar", "manda") NAO
+# entram — uma pergunta genuina sem essas palavras ainda e pega pela regra do "?".
+_QUESTION_WORDS_RE = re.compile(
+    r"\b(como|quando|qual|quais|quanto|quantos|quantas|onde|cad[eê]|"
+    r"porqu[eê]|por\s?que|pra\s?que|posso|funciona|serve|efeito|colateral|"
+    r"contraindica|contra\s?indica|demora|entrega|garantia|validade|vence|"
+    r"seguro|gravida|amamenta)\b",
+    re.IGNORECASE,
+)
+
+
+def message_has_checkout_data(text: str) -> bool:
+    """True se a mensagem carrega algum dado de checkout (CPF/CEP/numero da casa).
+
+    Usado para NAO confundir uma mensagem com dados (mesmo que tenha um '?') com
+    uma pergunta pura (AC-3 da story-073).
+    """
+    parsed = parse_message(text or "")
+    return any(parsed.get(field_name) for field_name in ("document", "postal_code", "number"))
+
+
+def is_checkout_question(text: str) -> bool:
+    """True se a mensagem e uma PERGUNTA/duvida (nao um dado de checkout) — story-073.
+
+    Conservador: se a mensagem carrega dado de checkout (CPF/CEP/numero), e
+    tratada como coleta (AC-3), nunca como pergunta. Caso contrario, considera
+    pergunta quando termina em '?' ou contem um marcador interrogativo.
+    """
+    value = (text or "").strip()
+    if not value:
+        return False
+    if message_has_checkout_data(value):
+        return False
+    if value.endswith("?"):
+        return True
+    return bool(_QUESTION_WORDS_RE.search(value))
+
+
+def build_checkout_resume_hint(collected: dict[str, Any]) -> str:
+    """Retomada gentil da coleta apos responder uma duvida (story-073).
+
+    Pede so o que ainda falta — nunca repete secamente "preciso dos dados".
+    """
+    pending = pending_required(collected or {})
+    if not pending:
+        return "Quando quiser, e so confirmar que eu ja finalizo seu pedido."
+    labels = [_FIELD_LABELS_PT.get(field_name, field_name) for field_name in pending]
+    return f"Quando puder, me manda {_join_pt(labels)} que eu finalizo seu pedido."

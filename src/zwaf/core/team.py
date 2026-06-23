@@ -16,9 +16,11 @@ from typing import Any, Callable, Optional
 
 from zwaf.conversion.checkout_flow import (
     advance_checkout,
+    build_checkout_resume_hint,
     build_name_confirm_message,
     build_transition_message,
     is_affirmative_name_confirmation,
+    is_checkout_question,
     sanitize_name,
 )
 from zwaf.conversion.checkout_policy import is_opt_out_message
@@ -734,8 +736,10 @@ class ZWAFTeam:
                 message=message,
                 phone=phone,
                 session_id=session_id,
+                lead_id=lead_id,
                 state=state,
                 checkout=checkout,
+                signal=signal,
             )
 
         # Story-046: se ha uma pergunta de quantidade/meio pendente (gate pre-coleta),
@@ -773,6 +777,30 @@ class ZWAFTeam:
         if signal.action == ConversionAction.HANDLE_OBJECTION and not state.get("_had_objection"):
             state["_had_objection"] = True
             await _save_session_state(session_id, self._tenant.tenant_id, state)
+
+        # Story-075: troca de meio APOS um checkout ja decidido (cartao<->Pix).
+        # No caso real o cliente gera o link de cartao e depois diz "prefiro pagar
+        # com pix" — uma frase macia que NAO dispara should_send_payment_link, entao
+        # o fluxo deterministico devolvia None e o LLM reassumia, perdendo o estado e
+        # reperguntando "quantos potes?" (queda de ticket 2->1). Aqui: se ha um
+        # checkout inativo com quantidade ja decidida e o cliente menciona OUTRO meio,
+        # reabrimos a coleta preservando a quantidade e o produto — sem reperguntar.
+        last_checkout = state.get("checkout") or {}
+        if (
+            not signal.should_send_payment_link
+            and not last_checkout.get("active")
+            and last_checkout.get("quantity")
+            and mentioned_billing is not None
+            and mentioned_billing != last_checkout.get("billing_type")
+        ):
+            return await self._begin_checkout_or_prompt(
+                phone=phone,
+                session_id=session_id,
+                state=state,
+                quantity=int(last_checkout["quantity"]),
+                billing_type=mentioned_billing,
+                product_hint=last_checkout.get("product_id") or signal.product_hint,
+            )
 
         # Nao ativo: inicia a coleta apenas quando ha intencao de compra explicita.
         # Story-046: se a quantidade NAO foi decidida, ancora 2-vs-1 antes de assumir
@@ -862,10 +890,37 @@ class ZWAFTeam:
         message: str,
         phone: str,
         session_id: str,
+        lead_id: str = "",
         state: dict,
         checkout: dict,
+        signal: Optional[LeadSignal] = None,
     ) -> str:
         """Processa um turno de coleta: avanca o fluxo, gera o pagamento ou pede o que falta."""
+        # Story-073: se o cliente faz uma PERGUNTA/duvida durante a coleta (em vez
+        # de mandar os dados), responde a duvida via LLM/knowledge SEM sair do
+        # checkout e retoma a coleta gentilmente. Detecta ANTES de qualquer
+        # extracao: uma mensagem que CONTEM dados (CPF/CEP/numero) nunca e tratada
+        # como pergunta (AC-3). Sinal critico (saude/raiva) ja foi escalado antes
+        # (HIGH-1, _handle_checkout), entao aqui responder e seguro (AC-4).
+        # A heuristica `is_checkout_question` (termina em '?' / marcador forte +
+        # ausencia de dado) e conservadora de proposito — a inteligencia
+        # ANSWER_QUESTION do `signal` confirma, mas nao amplia o conjunto, para nao
+        # desviar mensagens de coleta ("nao entendi", nome solto) para o LLM.
+        if is_checkout_question(message):
+            answer = await self._run_agent(
+                agent_name="vendedor",
+                message=message,
+                session_id=session_id,
+                lead_id=lead_id,
+                phone=phone,
+            )
+            # Preserva o checkout ATIVO e os campos ja coletados — a coleta retoma
+            # de onde parou no proximo turno (AC-2).
+            state["checkout"] = checkout
+            await _save_session_state(session_id, self._tenant.tenant_id, state)
+            resume = build_checkout_resume_hint(checkout.get("fields", {}))
+            return f"{answer}\n\n{resume}".strip()
+
         # Story-042: se o cliente trocar de meio durante a coleta ("na verdade no
         # cartao"), respeita a ultima escolha — os dados coletados continuam validos.
         switched_billing = _detect_billing_type(message)
@@ -880,6 +935,7 @@ class ZWAFTeam:
         current_qty = int(checkout.get("quantity", 1) or 1)
         if switched_qty is not None and switched_qty != current_qty:
             checkout["quantity"] = switched_qty
+            state["last_quantity"] = switched_qty  # story-075: qty corrigida sobrevive a troca de meio
             turn = await advance_checkout(message, checkout.get("fields", {}))
             checkout["fields"] = turn.collected
             state["checkout"] = checkout
@@ -1178,6 +1234,12 @@ class ZWAFTeam:
         """
         product_id = self._default_product_id(product_hint)
         qty = max(1, int(quantity or 1))
+        # Story-075: a quantidade decidida vira o "last_quantity" da sessao. Assim,
+        # se o cliente gerar o link de cartao (checkout encerra) e depois trocar para
+        # Pix ("prefiro pix"), a reentrada reaproveita a qty ja decidida e NAO
+        # repergunta "quantos potes?" (queda de ticket 2->1 no caso real).
+        if state.get("last_quantity") != qty:
+            state["last_quantity"] = qty
         if billing_type == "CREDIT_CARD":
             checkout = {
                 "active": False,

@@ -42,6 +42,12 @@ _NUMBER_RE = re.compile(
 # Palavras que tipicamente abrem um complemento (para limpar a captura).
 _COMPLEMENT_CLEAN_RE = re.compile(r"^[\s/,-]+")
 
+# CPF em texto livre (11 digitos, com ou sem mascara) — story-074 BUG-2:
+# precisa sair do texto ANTES da extracao do numero da casa, senao o
+# _NUMBER_RE captura os 6 primeiros digitos do CPF como "numero" (caso Fernando:
+# CPF 21722244801 virava numero "217222" em vez de "930").
+_CPF_RE = re.compile(r"\b\d{3}\.?\s?\d{3}\.?\s?\d{3}-?\s?\d{2}\b")
+
 
 def _extract_postal_code(text: str) -> str:
     match = _CEP_RE.search(text or "")
@@ -55,9 +61,15 @@ def _strip_cep_from_text(text: str) -> str:
     return _CEP_RE.sub(" ", text or "")
 
 
+def _strip_cpf_from_text(text: str) -> str:
+    """Remove o CPF (11 digitos) do texto para nao confundir a extracao de numero
+    da casa (story-074 BUG-2)."""
+    return _CPF_RE.sub(" ", text or "")
+
+
 def _extract_number_and_complement(text: str) -> tuple[str, str]:
-    """Extrai (number, complement) de texto livre, ignorando o CEP."""
-    cleaned = _strip_cep_from_text(text)
+    """Extrai (number, complement) de texto livre, ignorando o CEP e o CPF."""
+    cleaned = _strip_cpf_from_text(_strip_cep_from_text(text))
     match = _NUMBER_RE.search(cleaned)
     if not match:
         return "", ""
