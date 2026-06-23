@@ -68,9 +68,9 @@ Contato: (11) 9 8834-7270
 
 | SKU | Cartao | Pix |
 |-----|--------|-----|
-| 1 frasco | R$ 185,00 | R$ 165,90 |
-| 2 frascos | R$ 347,90 | R$ 335,90 |
-| 3 frascos | R$ 448,90 | R$ 422,90 |
+| 1 frasco | R$ 165,90 | R$ 165,90 |
+| 2 frascos | R$ 335,90 | R$ 335,90 |
+| 3 frascos | R$ 422,90 | R$ 422,90 |
 
 - Frete gratis em compras acima de R$ 300
 - Estoque atual: 275 frascos

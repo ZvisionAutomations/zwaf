@@ -7,7 +7,6 @@ import pytest
 
 from zwaf.conversion.funnel_events import (
     ALLOWED_EVENT_FIELDS,
-    FunnelEvent,
     FunnelEventName,
     build_funnel_event,
     contains_sensitive_value,

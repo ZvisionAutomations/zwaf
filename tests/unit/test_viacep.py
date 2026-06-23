@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 
 import httpx
-import pytest
 
 from zwaf.integrations.viacep import _mask_cep, map_viacep_response, resolve_cep
 

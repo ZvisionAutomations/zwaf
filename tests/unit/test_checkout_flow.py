@@ -227,3 +227,69 @@ async def test_advance_asks_address_when_viacep_fails(monkeypatch):
     # Pede os campos que o ViaCEP nao trouxe, sem repedir CEP/numero.
     assert "rua" in turn.reply or "cidade" in turn.reply
     assert "CEP" not in turn.reply
+
+
+# ---------------------------------------------------------------------------
+# story-068: pushName -> sanitizacao, confirmacao e transicao sem "Nome:"
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_name_trims_and_titlecases():
+    assert cf.sanitize_name("  maria   silva  ") == "Maria Silva"
+    assert cf.sanitize_name("MARIA SILVA") == "Maria Silva"
+    assert cf.sanitize_name("maria") == "Maria"
+
+
+def test_sanitize_name_keeps_connectors_lowercase():
+    assert cf.sanitize_name("maria DE souza") == "Maria de Souza"
+    assert cf.sanitize_name("joao dos santos") == "Joao dos Santos"
+    # conector como primeira palavra ainda capitaliza
+    assert cf.sanitize_name("da silva") == "Da Silva"
+
+
+def test_sanitize_name_strips_emoji_and_symbols():
+    assert cf.sanitize_name("Maria 🌸 Silva") == "Maria Silva"
+    assert cf.sanitize_name("✨Joao✨") == "Joao"
+    assert cf.sanitize_name("Ana-Clara D'Avila") == "Ana-Clara D'Avila"
+
+
+def test_sanitize_name_strips_digits():
+    assert cf.sanitize_name("Maria123") == "Maria"
+    assert cf.sanitize_name("Loja 24h Maria") == "Loja H Maria"
+
+
+def test_sanitize_name_returns_empty_for_unusable():
+    # CTWA/@lid: pushName ausente/vazio/so emoji -> "" (cai no fluxo de pedir nome)
+    assert cf.sanitize_name("") == ""
+    assert cf.sanitize_name(None) == ""  # type: ignore[arg-type]
+    assert cf.sanitize_name("🌸✨🔥") == ""
+    assert cf.sanitize_name("123 456") == ""
+
+
+def test_is_affirmative_name_confirmation_accepts_yes_forms():
+    for msg in ["sim", "Sim!", "isso mesmo", "pode registrar", "ok", "beleza",
+                "claro", "perfeito", "sou eu", "esse mesmo"]:
+        assert cf.is_affirmative_name_confirmation(msg) is True, msg
+
+
+def test_is_affirmative_name_confirmation_rejects_no_or_empty():
+    for msg in ["nao", "não", "nao, e outro nome", "muda pra Joao", "errado", ""]:
+        assert cf.is_affirmative_name_confirmation(msg) is False, msg
+
+
+def test_build_name_confirm_message_uses_name():
+    msg = cf.build_name_confirm_message("Maria Silva")
+    assert "Maria Silva" in msg
+    assert "?" in msg
+
+
+def test_transition_message_omits_name_when_known():
+    msg = cf.build_transition_message(2, "PIX", known_name="Maria Silva")
+    assert "Nome:" not in msg
+    assert "Maria Silva" in msg
+    assert "CPF:" in msg and "CEP:" in msg and "Numero:" in msg
+
+
+def test_transition_message_asks_name_when_unknown():
+    msg = cf.build_transition_message(1, "PIX")
+    assert "Nome:" in msg

@@ -6,7 +6,7 @@ KB de persuasão (`prompts/vendedor.kb.md` §4) e do ADR (Ramo 7).
 Formato de cada card: **objeção → princípio → resposta-modelo → próximo passo.**
 
 > Preços alinhados à fonte viva (`config.json` / story-028): Pix R$149 (1 pote) · R$128/un (2-4 potes)
-> · R$119,90/un (5+). Frete grátis para todos. Cartão ~10% acima do Pix. **Sem urgência/escassez
+> · R$119,90/un (5+). Frete grátis para todos. Cartão pelo mesmo valor do Pix (dá para parcelar). **Sem urgência/escassez
 > falsa. Sem citar número de clientes ou depoimentos** (prova social OUT até validação do Fernando).
 > Ingredientes reais: óleo de linhaça, óleo de prímula, óleo de borragem e vitamina E.
 

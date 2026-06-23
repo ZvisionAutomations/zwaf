@@ -1,6 +1,8 @@
 """Asaas payment tool unit tests."""
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import httpx
 import pytest
 
@@ -38,6 +40,7 @@ TIERED_PRODUCTS = {
 
 VALID_DOCUMENT = "529" + "982" + "247" + "25"
 PIX_COPY_PASTE = "00020126PIXCOPIAECOLA520400005303986540514.905802BR"
+BOLETO_LINE_CODE = "34191.79001 01043.510047 91020.150008 9 99990000016590"
 VALID_ADDRESS = {
     "postal_code": "01001000",
     "street": "Rua Teste",
@@ -90,6 +93,8 @@ class FakeAsyncClient:
             return FakeResponse(
                 {"payload": PIX_COPY_PASTE, "encodedImage": "iVBORw0KGgoQR=="}, method="GET"
             )
+        if url.endswith("/identificationField"):  # story-069 boleto linha digitavel
+            return FakeResponse({"identificationField": BOLETO_LINE_CODE}, method="GET")
         if url.endswith("/customers"):
             data = [self.existing_customer] if self.existing_customer else []
             return FakeResponse({"data": data}, method="GET")
@@ -100,6 +105,17 @@ class FakeAsyncClient:
         if url.endswith("/customers"):
             return FakeResponse({"id": "cus_123"})
         if url.endswith("/payments"):
+            # story-069: boleto responde com bankSlipUrl + dueDate, sem a linha
+            # digitavel no corpo (forca o GET /identificationField).
+            if (json or {}).get("billingType") == "BOLETO":
+                return FakeResponse(
+                    {
+                        "id": "pay_bol",
+                        "bankSlipUrl": "https://asaas.test/b/pay_bol.pdf",
+                        "dueDate": json.get("dueDate", ""),
+                        "status": "PENDING",
+                    }
+                )
             return FakeResponse({"id": "pay_123", "invoiceUrl": "https://asaas.test/i/pay_123"})
         if url.endswith("/checkouts"):
             return FakeResponse({"id": "chk_123", "link": "https://asaas.test/c/chk_123"})
@@ -137,7 +153,7 @@ async def test_generate_payment_link_creates_customer_and_pix_payment(monkeypatc
     assert PIX_COPY_PASTE in result  # copia-e-cola entregue no chat (story-041)
     assert len(fake_client.calls) == 4  # lookup, create customer, create payment, pixQrCode
     lookup_call, customer_call, payment_call, pix_call = fake_client.calls
-    assert pix_call["url"].endswith(f"/payments/pay_123/pixQrCode")
+    assert pix_call["url"].endswith("/payments/pay_123/pixQrCode")
     assert lookup_call["method"] == "GET"
     assert lookup_call["url"].endswith("/customers")
     assert lookup_call["params"] == {
@@ -703,3 +719,113 @@ async def test_generate_payment_link_releases_reservation_on_asaas_error(monkeyp
     assert result == payment._MSG_GENERIC_ERROR
     assert released == ["order-123"]  # reservation freed
     assert marked_failed == ["order-123"]  # order flagged payment_link_failed
+
+
+# ---------------------------------------------------------------------------
+# story-069: boleto (vence em 24h) como 3a forma de pagamento
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_due_days_boleto_is_d_plus_1():
+    assert payment._resolve_due_days({}, "BOLETO") == 1  # default D+1 (24h)
+    assert payment._resolve_due_days({"boleto_due_days": 3}, "BOLETO") == 3
+    assert payment._resolve_due_days({"boleto_due_days": -5}, "BOLETO") == 0  # nunca < hoje
+    assert payment._resolve_due_days({}, "PIX") == 2  # demais meios mantem default
+
+
+def test_format_due_date_br():
+    assert payment._format_due_date_br("2026-06-23") == "23/06/2026"
+    assert payment._format_due_date_br("invalid") == ""
+    assert payment._format_due_date_br("") == ""
+
+
+def test_boleto_message_with_line_code_splits_and_has_pdf_and_due():
+    msg = payment._boleto_message(
+        BOLETO_LINE_CODE, "https://asaas.test/b/x.pdf", "2026-06-23", 16590
+    )
+    parts = msg.split(payment.MESSAGE_SPLIT)
+    assert len(parts) == 2
+    assert parts[1] == BOLETO_LINE_CODE  # linha digitavel PURA na 2a mensagem
+    assert "https://asaas.test/b/x.pdf" in parts[0]
+    assert "23/06/2026" in parts[0]
+    assert "R$ 165,90" in parts[0]
+    assert "antecedencia" in parts[0]  # aviso de prazo/compensacao
+
+
+def test_boleto_message_without_line_code_falls_back_to_pdf_only():
+    msg = payment._boleto_message("", "https://asaas.test/b/x.pdf", "2026-06-23", 16590)
+    assert payment.MESSAGE_SPLIT not in msg
+    assert "https://asaas.test/b/x.pdf" in msg
+    assert "23/06/2026" in msg
+
+
+@pytest.mark.asyncio
+async def test_generate_payment_link_boleto_d_plus_1_with_line_and_pdf(monkeypatch):
+    fake_client = FakeAsyncClient()
+    monkeypatch.setattr(payment.httpx, "AsyncClient", lambda **kwargs: fake_client)
+    monkeypatch.setenv("ASAAS_API_KEY", "test-asaas-key")
+    monkeypatch.setenv("ASAAS_BASE_URL", "https://api-sandbox.asaas.com/v3")
+
+    generate_payment_link = payment.make_payment_link_generator(
+        "livia-raiz-vital",
+        {"products": PRODUCTS, "boleto_due_days": 1},
+    )
+
+    result = await generate_payment_link(
+        "new-woman-1",
+        "5511999990001",
+        customer_name="Maria Silva",
+        customer_document=VALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+        billing_type="BOLETO",
+    )
+
+    # AC-2: linha digitavel + PDF na resposta
+    assert BOLETO_LINE_CODE in result
+    assert "https://asaas.test/b/pay_bol.pdf" in result
+
+    # AC-1/AC-4: cobranca BOLETO com dueDate = hoje + 1 dia (nunca < hoje)
+    payment_call = next(c for c in fake_client.calls if c["url"].endswith("/payments"))
+    assert payment_call["json"]["billingType"] == "BOLETO"
+    expected_due = (date.today() + timedelta(days=1)).isoformat()
+    assert payment_call["json"]["dueDate"] == expected_due
+    assert payment_call["json"]["dueDate"] >= date.today().isoformat()
+
+    # buscou a linha digitavel via GET /identificationField (story-069)
+    assert any(c["url"].endswith("/identificationField") for c in fake_client.calls)
+    # preco do boleto = preco Pix (sem markup): 165.90
+    assert payment_call["json"]["value"] == 165.9
+
+
+@pytest.mark.asyncio
+async def test_generate_payment_link_boleto_reserves_stock_before_charge(monkeypatch):
+    """AC-5: estoque reservado ANTES de criar a cobranca; sem reserva, sem boleto."""
+    fake_client = FakeAsyncClient()
+    monkeypatch.setattr(payment.httpx, "AsyncClient", lambda **kwargs: fake_client)
+    monkeypatch.setenv("ASAAS_API_KEY", "test-asaas-key")
+    monkeypatch.setenv("ASAAS_BASE_URL", "https://api-sandbox.asaas.com/v3")
+
+    reserve_calls: list[dict] = []
+
+    async def fake_reserve(*, tenant_id, product_id, quantity, order_id):
+        reserve_calls.append({"product_id": product_id, "quantity": quantity})
+        return ReservationResult(ok=True, status="reserved")
+
+    monkeypatch.setattr(payment, "reserve_inventory", fake_reserve)
+
+    generate_payment_link = payment.make_payment_link_generator(
+        "livia-raiz-vital",
+        {"products": PRODUCTS},
+    )
+
+    result = await generate_payment_link(
+        "new-woman-1",
+        "5511999990001",
+        customer_name="Maria Silva",
+        customer_document=VALID_DOCUMENT,
+        delivery_address=VALID_ADDRESS,
+        billing_type="BOLETO",
+    )
+
+    assert BOLETO_LINE_CODE in result
+    assert reserve_calls and reserve_calls[0]["quantity"] == 1  # reservou antes da cobranca
