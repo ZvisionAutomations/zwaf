@@ -62,6 +62,16 @@ class ABTestVariantTests(unittest.TestCase):
 
         self.assertEqual(result, "Prompt A fallback")
 
+    def test_livia_real_vendedor_b_prompt_exists_and_differs_from_a(self) -> None:
+        from zwaf.core.base_agent import _load_prompt
+
+        prompt_a = _load_prompt("livia-raiz-vital", "vendedor", variant="A")
+        prompt_b = _load_prompt("livia-raiz-vital", "vendedor", variant="B")
+
+        self.assertIn("HIPOTESE UNICA", prompt_b)
+        self.assertIn("Qual sintoma tem atrapalhado mais seu dia hoje", prompt_b)
+        self.assertNotEqual(prompt_a, prompt_b)
+
     def test_admin_ab_test_no_db_returns_empty(self) -> None:
         with patch.dict("os.environ", {"DATABASE_URL": ""}):
             import importlib
