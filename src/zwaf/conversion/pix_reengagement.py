@@ -110,16 +110,38 @@ def build_reengagement_message(
     total_cents: int,
     pix_due_date: Optional[date],
     payment_url: Optional[str] = None,
+    lead_memory: Optional[dict] = None,
 ) -> str:
-    """Build the WhatsApp re-engagement message for an expiring PIX charge."""
+    """Build the WhatsApp re-engagement message for an expiring PIX charge.
+
+    Optionally personalized with lead memory (story-066). LGPD-safe: no PII in message.
+    """
     price = _format_brl(total_cents)
     due_str = (
         pix_due_date.strftime("%d/%m") if pix_due_date else "hoje"
     )
+
+    # Personalization based on memory (LGPD guardrails: no PII in message)
+    personalization = ""
+    if lead_memory:
+        objections = lead_memory.get("objections") or []
+        has_price_objection = any(
+            "preco" in str(o).lower()
+            or "valor" in str(o).lower()
+            or "caro" in str(o).lower()
+            for o in objections
+        )
+        if has_price_objection and total_cents > 0:
+            per_day = total_cents / 100 / 30
+            personalization = f" Vale menos de R$ {per_day:.2f} por dia."
+        elif lead_memory.get("primary_symptom"):
+            # Never expose the symptom itself -- use a generic reference
+            personalization = " Ainda dá tempo de cuidar do que você está sentindo."
+
     msg = (
         f"Oi! Sou a Lívia, da Raiz Vital — assistente virtual 🌿\n\n"
         f"Seu Pix de {price} vence em {due_str}. "
-        "Ainda dá tempo de garantir seu New Woman! "
+        f"Ainda dá tempo de garantir seu New Woman!{personalization} "
         "É só copiar o código Pix que te enviamos e colar no app do seu banco. 💚\n\n"
         "Qualquer dúvida, é só responder aqui."
     )
@@ -156,10 +178,19 @@ async def run_pix_reengagement_job(
             )
             continue
 
+        # Fetch lead memory for personalization (story-066) -- best-effort, LGPD-safe
+        lead_memory = None
+        try:
+            from zwaf.memory.lead_store import get_lead_memory
+            lead_memory = await get_lead_memory(phone=phone, tenant_id=tenant_id)
+        except Exception:
+            pass  # memory is optional -- never block the send
+
         message = build_reengagement_message(
             total_cents=int(order.get("total_cents") or 0),
             pix_due_date=order.get("pix_due_date"),
             payment_url=order.get("asaas_payment_url"),
+            lead_memory=lead_memory,
         )
         try:
             await whatsapp_tool(phone=phone, message=message)

@@ -74,5 +74,32 @@ class ABTestVariantTests(unittest.TestCase):
         self.assertEqual(result["test_name"], "vendedor_prompt")
 
 
+
+
+class VendorBPromptTests(unittest.TestCase):
+    def test_vendor_b_prompt_exists_and_differs_from_a(self) -> None:
+        """vendedor_b.md deve existir e diferir de vendedor.md (hipotese isolada)."""
+        from pathlib import Path
+
+        base = (
+            Path(__file__).parent.parent.parent
+            / "tenants"
+            / "livia-raiz-vital"
+            / "prompts"
+        )
+        prompt_a_path = base / "vendedor.md"
+        prompt_b_path = base / "vendedor_b.md"
+
+        self.assertTrue(prompt_b_path.exists(), "vendedor_b.md nao encontrado")
+
+        prompt_a = prompt_a_path.read_text(encoding="utf-8")
+        prompt_b = prompt_b_path.read_text(encoding="utf-8")
+
+        self.assertTrue(len(prompt_b) > 0, "vendedor_b.md esta vazio")
+        self.assertNotEqual(prompt_a, prompt_b, "Variante B deve diferir da A (hipotese isolada)")
+
+        # The only diff should be the opening question
+        self.assertIn("ondas de calor", prompt_b, "Variante B deve conter pergunta especifica de sintomas")
+        self.assertNotIn("ondas de calor", prompt_a, "Variante A nao deve conter a pergunta da B")
 if __name__ == "__main__":
     unittest.main()

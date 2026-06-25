@@ -46,7 +46,7 @@
       "new-woman": {
         "product_id": "nw-001",
         "pricing_model": "tiered_unit",
-        "card_markup_pct": 10,
+        "card_markup_pct": 0,
         "unit_price_tiers_pix_cents": [
           {"min_qty": 1, "max_qty": 1, "unit_cents": 14900},
           {"min_qty": 2, "max_qty": 4, "unit_cents": 12800},

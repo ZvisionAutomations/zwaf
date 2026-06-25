@@ -19,7 +19,7 @@
 | **Canal** | WhatsApp 1:1, assíncrono, conversa real | Persuasão conversacional, não copy de página. Mensagens curtas, uma ideia por vez. |
 | **Produto** | New Woman — suplemento feminino (óleo de linhaça, prímula, borragem, vit. E) | Categoria saúde/bem-estar → **guardrails médicos rígidos** (sem cura/milagre/garantia). |
 | **Público** | Mulheres com sintomas (climatério/TPM/bem-estar hormonal — inferido do roteiro "há quanto tempo passa pelos sintomas") | Dor real, sensível, ligada a autoestima e qualidade de vida. Empatia > pressão. |
-| **Ticket** | R$149 (1 pote) a R$599,50 (5 potes); kit 2-4 = R$128/pote; cartão +10% | Espaço claro de **ancoragem por quantidade** e framing de "tratamento". |
+| **Ticket** | R$149 (1 pote) a R$599,50 (5 potes); kit 2-4 = R$128/pote; cartão = mesmo preço Pix | Espaço claro de **ancoragem por quantidade** e framing de "tratamento". |
 | **Persona Livia** | "Calorosa, nunca pressiona, foca em benefícios reais, sem exagerar" | Persuasão precisa ser **consultiva**, não agressiva. Hard-sell quebra a persona e a confiança. |
 | **Aprendizado Fase 1** | Lead estava decidida; perda foi atrito técnico (já corrigido na story-035) | Fase 2 ataca a outra ponta: **leads em cima do muro** e **aumento de ticket** (mais potes). |
 
@@ -93,7 +93,7 @@ O pricing tiered é a maior alavanca de **ticket médio** e já existe — basta
 | **Âncora alta → faixa do meio** | Mostrar o avulso (R$149) e revelar que 2-4 potes caem para R$128/un. | *"No pote avulso fica R$149. Mas a partir de 2 potes o valor cai para R$128 cada — e o frete continua grátis."* |
 | **Economia explícita** | Tornar a vantagem do kit numérica (sem inventar desconto novo). | *"Levando 3, você já garante o tratamento completo e economiza em cada pote."* |
 | **Topo de faixa (5+)** | Para quem demonstra alto interesse / recompra. | *"A partir de 5 potes o valor por pote é o menor: R$119,90."* |
-| **Pix vs cartão** | Pix é o melhor preço (cartão +10%); usar como nudge suave. | *"No Pix você pega o melhor valor; no cartão fica cerca de 10% acima."* |
+| **Pix vs cartão** | Pix e cartão têm o mesmo preço (markup zerado story-064). | *"Pix ou cartão -- o preço é o mesmo."* |
 
 > **Guardrail:** as três faixas (149 / 128 / 119,90) são o teto da generosidade.
 > Qualquer desconto adicional exige aprovação (prompt vivo, linha 83).
@@ -117,7 +117,7 @@ O pricing tiered é a maior alavanca de **ticket médio** e já existe — basta
 
 - **Frete grátis para todos, sem mínimo** (story-028, §"Decisões 4").
 - **Preço cai por quantidade** — fato, não promoção fabricada.
-- **Pix = melhor preço** (cartão +10%).
+- **Pix = mesmo preço que cartão** (markup zerado story-064).
 - **Atendimento consultivo humano-like** — a própria experiência Livia é diferencial.
 
 Tudo o mais (escassez de estoque, contador, bônus, brinde, depoimento) **não pode ser usado** até ser real e aprovado.

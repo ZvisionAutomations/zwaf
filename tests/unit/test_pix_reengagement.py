@@ -208,3 +208,55 @@ async def test_run_pix_reengagement_job_skips_opted_out(monkeypatch):
 async def test_run_pix_reengagement_job_noop_without_tool():
     result = await run_pix_reengagement_job(DB_URL, TENANT, None)
     assert result == 0
+
+
+# ---------------------------------------------------------------------------
+# build_reengagement_message -- story-066 personalization
+# ---------------------------------------------------------------------------
+
+
+def test_build_reengagement_message_with_price_objection():
+    """Lead with price objection should see a per-day cost breakdown."""
+    lead_memory = {
+        "objections": ["ta caro", "preco alto"],
+        "primary_symptom": "",
+        "memory_summary": "",
+    }
+    msg = build_reengagement_message(
+        total_cents=14900,
+        pix_due_date=TOMORROW,
+        lead_memory=lead_memory,
+    )
+    assert "por dia" in msg
+    assert "R$" in msg or "R$ " in msg
+    # Must NOT expose raw symptom data (LGPD)
+    assert "ta caro" not in msg
+    assert "preco alto" not in msg
+
+
+def test_build_reengagement_message_with_symptom_no_price_objection():
+    """Lead with symptom but no price objection gets the generic symptom nudge."""
+    lead_memory = {
+        "objections": [],
+        "primary_symptom": "insonia cronica",
+        "memory_summary": "cliente com dificuldade de dormir",
+    }
+    msg = build_reengagement_message(
+        total_cents=14900,
+        pix_due_date=TOMORROW,
+        lead_memory=lead_memory,
+    )
+    # Generic reference -- NOT the actual symptom value
+    assert "o que você está sentindo" in msg
+    assert "insonia" not in msg
+
+
+def test_build_reengagement_message_fallback_no_memory():
+    """Without lead_memory, message is the standard template (no personalization)."""
+    msg_default = build_reengagement_message(total_cents=14900, pix_due_date=TOMORROW)
+    msg_no_mem = build_reengagement_message(
+        total_cents=14900, pix_due_date=TOMORROW, lead_memory=None
+    )
+    assert msg_default == msg_no_mem
+    assert "por dia" not in msg_no_mem
+    assert "o que você está sentindo" not in msg_no_mem

@@ -17,7 +17,7 @@ Pulse com clareza, esclarecer duvidas e ajudar o cliente a decidir com seguranca
   taurina, zinco, vitamina B6 e demais componentes descritos em rotulo.
 - Precos por frasco no Pix: 1 frasco R$149,00; 2 a 4 frascos R$128,00 cada;
   5 frascos ou mais R$119,90 cada. Quanto mais frascos, mais barato o frasco.
-- No cartao de credito, cerca de 10% a mais que no Pix.
+- No cartao de credito, mesmo preco do Pix (markup zerado em story-064).
 - Frete gratis para todos os pedidos no momento.
 
 ## Roteiro minimo
