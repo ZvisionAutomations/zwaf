@@ -23,8 +23,9 @@ DB_URL = "postgresql://zwaf:test@postgres:5432/zwaf"
 async def test_schedule_followups_creates_due_warm_post_offer(monkeypatch):
     now = datetime(2026, 6, 22, 13, 0, tzinfo=timezone.utc)
     candidate = FollowupCandidate(
+        # story-083: POST_OFFER is OFF by default; use an enabled high-intent stage.
         phone="5511999990001",
-        stage=FollowupStage.POST_OFFER,
+        stage=FollowupStage.CHECKOUT_INCOMPLETE,
         messages="qual o valor preco",
         last_activity_at=now,
     )
@@ -72,7 +73,7 @@ async def test_run_job_sends_due_followup_and_persists_counter(monkeypatch):
             {
                 "id": "f1",
                 "phone": "5511999990002",
-                "stage": "post_offer",
+                "stage": "checkout_incomplete",
                 "contacts_sent": 0,
                 "context_messages": "qual o valor preco",
             }
@@ -87,10 +88,18 @@ async def test_run_job_sends_due_followup_and_persists_counter(monkeypatch):
     async def fake_mark_sent(_db_url, row, *, plan, contact, sent_at):
         persisted.append({"row": row, "plan": plan, "contact": contact, "sent_at": sent_at})
 
+    async def fake_paid(*_args, **_kwargs):
+        return False
+
+    async def fake_name(*_args, **_kwargs):
+        return ""
+
     monkeypatch.setattr(mod, "schedule_commercial_followups", fake_schedule)
     monkeypatch.setattr(mod, "claim_due_followups", fake_claim)
     monkeypatch.setattr(mod, "is_followup_opted_out", fake_optout)
     monkeypatch.setattr(mod, "mark_followup_sent", fake_mark_sent)
+    monkeypatch.setattr(mod, "_has_paid_order", fake_paid)
+    monkeypatch.setattr(mod, "_fetch_lead_name", fake_name)
     monkeypatch.setattr(mod, "_emit_event", lambda *_args, **_kwargs: None)
 
     result = await run_commercial_followup_job(DB_URL, TENANT, fake_whatsapp)
@@ -122,7 +131,7 @@ async def test_run_job_does_not_resend_sending_row_after_restart(monkeypatch):
 async def test_opt_out_blocks_schedule(monkeypatch):
     candidate = FollowupCandidate(
         phone="5511999990003",
-        stage=FollowupStage.POST_OFFER,
+        stage=FollowupStage.CHECKOUT_INCOMPLETE,
         messages="qual o valor preco",
         last_activity_at=datetime.now(timezone.utc),
     )
@@ -149,7 +158,7 @@ async def test_opt_out_blocks_schedule(monkeypatch):
 async def test_medical_risk_blocks_schedule(monkeypatch):
     candidate = FollowupCandidate(
         phone="5511999990004",
-        stage=FollowupStage.POST_OFFER,
+        stage=FollowupStage.CHECKOUT_INCOMPLETE,
         messages="tomo remedio tive reacao",
         last_activity_at=datetime.now(timezone.utc),
     )

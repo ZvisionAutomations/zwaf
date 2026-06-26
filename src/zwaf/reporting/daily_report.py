@@ -99,13 +99,46 @@ async def get_daily_metrics(conn: "asyncpg.Connection", tenant_id: str) -> dict:
     )
     conversations_count = int(conversations or 0)
     sales_count = int(row[0] or 0) if row else 0
-    return {
+    metrics = {
         "conversations_today": conversations_count,
         "sales_today": sales_count,
         "conversion_rate": (sales_count / conversations_count) if conversations_count else 0.0,
         "revenue_today_cents": int(row[1] or 0) if row else 0,
         "total_sales_all_time": int(total or 0),
     }
+    metrics.update(await _followup_metrics(conn, tenant_id))
+    return metrics
+
+
+async def _followup_metrics(conn: "asyncpg.Connection", tenant_id: str) -> dict:
+    """Follow-up activity in the last 24h for the daily report (story-083 AC-9).
+
+    Graceful: returns zeros if the commercial_followups table is unavailable.
+    """
+    from zwaf.conversion.commercial_followup import _round_cap
+
+    base = {"followup_sent": 0, "followup_replied": 0, "followup_optout": 0, "followup_cap": _round_cap()}
+    try:
+        row = await conn.fetchrow(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE last_sent_at >= NOW() - INTERVAL '24 hours') AS sent,
+                COUNT(*) FILTER (WHERE last_replied_at >= NOW() - INTERVAL '24 hours') AS replied,
+                COUNT(*) FILTER (
+                    WHERE block_reason = 'opt_out' AND updated_at >= NOW() - INTERVAL '24 hours'
+                ) AS optout
+            FROM commercial_followups
+            WHERE tenant_id = $1
+            """,
+            tenant_id,
+        )
+        if row:
+            base["followup_sent"] = int(row["sent"] or 0)
+            base["followup_replied"] = int(row["replied"] or 0)
+            base["followup_optout"] = int(row["optout"] or 0)
+    except Exception as exc:  # noqa: BLE001 — report must never fail on follow-up stats
+        logger.warning("followup_metrics unavailable tenant=%s: %s", tenant_id, exc)
+    return base
 
 
 def _currency_brl(cents: Any) -> str:
@@ -170,7 +203,10 @@ def format_report(metrics: dict, date: str, initial_stock: int = 600) -> str:
         f"Taxa de conversao: {_percent(metrics.get('conversion_rate'))}\n"
         f"Vendas confirmadas: {_count(metrics.get('sales_today'))}\n"
         f"Receita do dia: {revenue_str}\n"
-        f"Estoque restante: {_stock(metrics, initial_stock)}\n\n"
+        f"Estoque restante: {_stock(metrics, initial_stock)}\n"
+        f"Follow-up (24h): {int(metrics.get('followup_sent') or 0)} enviados, "
+        f"{int(metrics.get('followup_replied') or 0)} responderam, "
+        f"{int(metrics.get('followup_optout') or 0)} opt-out (teto {int(metrics.get('followup_cap') or 0)}/rodada)\n\n"
         f"Alertas: {alerts_str}\n\n"
         f"_Proximo relatorio: amanha as 20:30_"
     )

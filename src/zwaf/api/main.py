@@ -87,9 +87,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             tenant_id=tenant_id,
             whatsapp_tool=whatsapp_tool,
         )
+        # Kill-switch (story-083): commercial follow-up is OFF unless explicitly
+        # enabled via env. Empty db_url => scheduler not registered => no job.
+        # Re-enable by setting COMMERCIAL_FOLLOWUP_ENABLED=true in the tenant env.
         register_commercial_followup_scheduler(
             agno_app=app,
-            db_url=db_url,
+            db_url=(db_url if os.getenv("COMMERCIAL_FOLLOWUP_ENABLED", "").lower() == "true" else ""),
             tenant_id=tenant_id,
             whatsapp_tool=whatsapp_tool,
         )
