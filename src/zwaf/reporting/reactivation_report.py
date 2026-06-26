@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from zwaf.db.dsn import normalize_dsn
+
 if TYPE_CHECKING:
     import asyncpg
 
@@ -85,7 +87,7 @@ def format_reactivation_report(metrics: dict) -> str:
 
 
 def _clean_asyncpg_url(db_url: str) -> str:
-    return db_url.replace("+asyncpg", "")
+    return normalize_dsn(db_url)
 
 
 async def build_reactivation_report(db_url: str | None, tenant_id: str) -> dict:

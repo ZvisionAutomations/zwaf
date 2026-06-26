@@ -9,6 +9,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from zwaf.conversion.checkout_policy import normalize_delivery_address
+from zwaf.db.dsn import normalize_dsn
 from zwaf.security.pii import (
     can_encrypt_pii,
     document_last4,
@@ -664,4 +665,4 @@ def _inserted(command_status: str) -> bool:
 
 
 def _db_url() -> str:
-    return (os.getenv("DATABASE_URL") or "").replace("+asyncpg", "")
+    return normalize_dsn(os.getenv("DATABASE_URL"))

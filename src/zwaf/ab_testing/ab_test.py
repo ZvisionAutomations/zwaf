@@ -4,6 +4,8 @@ from __future__ import annotations
 import hashlib
 import logging
 
+from zwaf.db.dsn import normalize_dsn
+
 logger = logging.getLogger("zwaf.ab_testing")
 
 
@@ -31,7 +33,7 @@ async def record_assignment(
         return
     try:
         import asyncpg
-        url = db_url.replace("+asyncpg", "")
+        url = normalize_dsn(db_url)
         conn = await asyncpg.connect(url)
         try:
             await conn.execute(

@@ -7,6 +7,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
+from zwaf.db.dsn import normalize_dsn
+
 if TYPE_CHECKING:
     import asyncpg
 
@@ -185,7 +187,7 @@ def _unavailable_metrics() -> dict:
 
 
 def _clean_asyncpg_url(db_url: str) -> str:
-    return db_url.replace("+asyncpg", "")
+    return normalize_dsn(db_url)
 
 
 def _initial_stock_from_env() -> int:
