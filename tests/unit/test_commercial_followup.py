@@ -197,3 +197,45 @@ async def test_mark_followup_replied_marks_once(monkeypatch):
     monkeypatch.setattr(mod, "_emit_event", lambda *_args, **_kwargs: None)
 
     assert await mark_followup_replied(DB_URL, TENANT, "5511999990005") is True
+
+
+def test_normalize_dsn_strips_asyncpg_dialect():
+    # story-081: asyncpg rejeita o dialeto SQLAlchemy postgresql+asyncpg://
+    assert (
+        mod._normalize_dsn("postgresql+asyncpg://zwaf:test@postgres:5432/zwaf")
+        == "postgresql://zwaf:test@postgres:5432/zwaf"
+    )
+    # idempotente para DSN ja limpa
+    assert (
+        mod._normalize_dsn("postgresql://zwaf:test@postgres:5432/zwaf")
+        == "postgresql://zwaf:test@postgres:5432/zwaf"
+    )
+    assert mod._normalize_dsn("") == ""
+
+
+@pytest.mark.asyncio
+async def test_mark_followup_replied_normalizes_dsn_before_connect(monkeypatch):
+    # story-081: a DSN no formato SQLAlchemy deve chegar normalizada ao asyncpg.connect
+    captured: dict[str, Any] = {}
+
+    class FakeConn:
+        async def fetchrow(self, _query, *_args):
+            return {"stage": "post_offer", "last_temperature": "warm", "contacts_sent": 1}
+
+        async def close(self):
+            return None
+
+    async def fake_connect(url):
+        captured["url"] = url
+        return FakeConn()
+
+    import asyncpg
+
+    monkeypatch.setattr(asyncpg, "connect", fake_connect)
+    monkeypatch.setattr(mod, "_emit_event", lambda *_args, **_kwargs: None)
+
+    sqlalchemy_dsn = "postgresql+asyncpg://zwaf:test@postgres:5432/zwaf"
+    await mark_followup_replied(sqlalchemy_dsn, TENANT, "5511999990006")
+
+    assert "+asyncpg" not in captured["url"]
+    assert captured["url"] == "postgresql://zwaf:test@postgres:5432/zwaf"
