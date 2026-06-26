@@ -33,8 +33,18 @@ class FollowupCandidate:
     dry_or_resistant: bool = False
 
 
+def _normalize_dsn(db_url: str) -> str:
+    """asyncpg rejeita o dialeto SQLAlchemy (``postgresql+asyncpg://``).
+
+    O ``DATABASE_URL`` do tenant esta no formato SQLAlchemy (necessario para o
+    Agno/SQLAlchemy em ``build_team``), mas este modulo conecta com asyncpg
+    direto. Normaliza removendo o sufixo ``+asyncpg`` antes de cada conexao.
+    """
+    return (db_url or "").replace("+asyncpg", "")
+
+
 def _db_url() -> str:
-    return (os.getenv("DATABASE_URL") or "").replace("+asyncpg", "")
+    return _normalize_dsn(os.getenv("DATABASE_URL") or "")
 
 
 async def run_commercial_followup_job(
@@ -181,7 +191,7 @@ async def get_followup_candidates(
     try:
         import asyncpg
 
-        conn = await asyncpg.connect(db_url)
+        conn = await asyncpg.connect(_normalize_dsn(db_url))
         try:
             rows = await conn.fetch(
                 """
@@ -240,7 +250,7 @@ async def is_followup_opted_out(db_url: str, tenant_id: str, phone: str) -> bool
     try:
         import asyncpg
 
-        conn = await asyncpg.connect(db_url)
+        conn = await asyncpg.connect(_normalize_dsn(db_url))
         try:
             value = await conn.fetchval(
                 """
@@ -276,7 +286,7 @@ async def upsert_scheduled_followup(
     """Persist scheduled state without resetting contacts already sent."""
     import asyncpg
 
-    conn = await asyncpg.connect(db_url)
+    conn = await asyncpg.connect(_normalize_dsn(db_url))
     try:
         await conn.execute(
             """
@@ -334,7 +344,7 @@ async def upsert_blocked_followup(
     """Persist a durable blocked status for opt-out or medical risk."""
     import asyncpg
 
-    conn = await asyncpg.connect(db_url)
+    conn = await asyncpg.connect(_normalize_dsn(db_url))
     try:
         await conn.execute(
             """
@@ -374,7 +384,7 @@ async def claim_due_followups(
     try:
         import asyncpg
 
-        conn = await asyncpg.connect(db_url)
+        conn = await asyncpg.connect(_normalize_dsn(db_url))
         try:
             rows = await conn.fetch(
                 """
@@ -431,7 +441,7 @@ async def mark_followup_sent(
     next_send_at = _next_send_after_success(contact, next_plan, _as_utc(sent_at))
     status = "scheduled" if next_send_at else "completed"
 
-    conn = await asyncpg.connect(db_url)
+    conn = await asyncpg.connect(_normalize_dsn(db_url))
     try:
         await conn.execute(
             """
@@ -464,7 +474,7 @@ async def mark_followup_blocked(db_url: str, followup_id: str, reason: str) -> N
         return
     import asyncpg
 
-    conn = await asyncpg.connect(db_url)
+    conn = await asyncpg.connect(_normalize_dsn(db_url))
     try:
         await conn.execute(
             """
@@ -489,7 +499,7 @@ async def release_followup_claim(db_url: str, followup_id: str, *, retry_minutes
     import asyncpg
 
     retry_at = _next_business_time(datetime.now(timezone.utc) + timedelta(minutes=retry_minutes))
-    conn = await asyncpg.connect(db_url)
+    conn = await asyncpg.connect(_normalize_dsn(db_url))
     try:
         await conn.execute(
             """
@@ -520,7 +530,7 @@ async def mark_followup_replied(
     try:
         import asyncpg
 
-        conn = await asyncpg.connect(db_url)
+        conn = await asyncpg.connect(_normalize_dsn(db_url))
         try:
             row = await conn.fetchrow(
                 """
