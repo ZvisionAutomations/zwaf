@@ -13,9 +13,11 @@ import pytest
 from zwaf.conversion.commercial_followup import (
     enroll_lead_for_followup,
     get_due_followups,
+    mark_followup_replied,
     run_commercial_followup_job,
     update_followup_state,
 )
+from zwaf.conversion.followup import FollowupStage, LeadTemperature, build_followup_plan
 
 TENANT = "livia-raiz-vital"
 DB_URL = "postgresql://zwaf:test@postgres:5432/zwaf"
@@ -276,3 +278,127 @@ async def test_run_followup_job_skips_when_lock_not_claimed(monkeypatch):
 
     result = await run_commercial_followup_job(DB_URL, TENANT, fake_whatsapp)
     assert result == 0
+
+
+# ---------------------------------------------------------------------------
+# mark_followup_replied (story-065 CRITICAL-2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mark_followup_replied_targets_pending(monkeypatch):
+    """A re-engaged lead cancels only pending follow-ups, scoped by tenant+phone."""
+    captured: dict[str, Any] = {}
+
+    class Conn(FakeConn):
+        async def execute(self, query: str, *args):
+            captured["query"] = query
+            captured["args"] = args
+            return "UPDATE 1"
+
+    async def fake_connect(_url):
+        return Conn()
+
+    monkeypatch.setattr(asyncpg, "connect", fake_connect)
+    await mark_followup_replied(DB_URL, TENANT, "5511999990005")
+
+    assert "status = 'replied'" in captured["query"]
+    assert "status = 'pending'" in captured["query"]
+    assert captured["args"] == (TENANT, "5511999990005")
+
+
+@pytest.mark.asyncio
+async def test_mark_followup_replied_empty_inputs_noop(monkeypatch):
+    async def fake_connect(_url):
+        raise AssertionError("must not open a connection without phone")
+
+    monkeypatch.setattr(asyncpg, "connect", fake_connect)
+    await mark_followup_replied(DB_URL, TENANT, "")  # no raise, no connect
+
+
+# ---------------------------------------------------------------------------
+# Send failure backoff (story-065 MEDIUM-2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_followup_job_backoff_on_send_failure(monkeypatch):
+    """A failed send reverts to pending WITH a future next_send_at (never NULL),
+    so the due-query can pick it up again on the next hourly run."""
+    import uuid
+
+    followup_id = str(uuid.uuid4())
+    due_row = {
+        "id": followup_id,
+        "lead_phone": "5511999990006",
+        "stage": "post_offer",
+        "temperature": "warm",
+        "contacts_sent": 0,
+    }
+
+    update_calls: list[tuple] = []
+
+    class UpdateConn(FakeConn):
+        async def execute(self, query: str, *args):
+            if "UPDATE commercial_followups" in query and "SET status = $2" in query:
+                update_calls.append(args)  # (id, status, contacts_sent, next_send_at)
+            return "UPDATE 1"
+
+    connect_count = [0]
+
+    async def fake_connect(_url):
+        connect_count[0] += 1
+        if connect_count[0] == 1:
+            return FakeConn(rows=[due_row])
+        if connect_count[0] == 2:
+            return FakeConn(fetchval_value=followup_id)  # lock claimed
+        if connect_count[0] == 3:
+            return FakeConn(fetchval_value=False)  # not opted out
+        return UpdateConn()  # update_followup_state after failure
+
+    monkeypatch.setattr(asyncpg, "connect", fake_connect)
+
+    async def failing_whatsapp(*, phone: str, message: str):
+        raise RuntimeError("evolution api down")
+
+    result = await run_commercial_followup_job(DB_URL, TENANT, failing_whatsapp)
+    assert result == 0
+    assert update_calls, "expected a state update on failure"
+    last = update_calls[-1]
+    assert last[1] == "pending"
+    assert last[3] is not None  # backoff set — row retried, not orphaned
+
+
+# ---------------------------------------------------------------------------
+# temperature_override single-source-of-truth (story-065 HIGH-3/HIGH-4)
+# ---------------------------------------------------------------------------
+
+
+def test_build_followup_plan_temperature_override_no_synthetic_text():
+    """The engine drives cadence by the persisted temperature, with NO message
+    text — the plan honors the override and computes limits/delays correctly."""
+    warm = build_followup_plan(
+        messages=[],
+        stage=FollowupStage.POST_OFFER,
+        temperature_override="warm",
+    )
+    assert warm.allowed
+    assert warm.temperature is LeadTemperature.WARM
+    assert warm.max_contacts == 3
+    assert warm.contacts[0].delay_hours == 1
+
+    cold = build_followup_plan(
+        messages=[],
+        stage=FollowupStage.POST_OFFER,
+        temperature_override="cold",
+    )
+    assert cold.max_contacts == 1
+
+    # The following contact (already sent 1) uses the next delay slot (24h).
+    warm_next = build_followup_plan(
+        messages=[],
+        stage=FollowupStage.POST_OFFER,
+        contacts_already_sent=1,
+        temperature_override="warm",
+    )
+    assert warm_next.contacts[0].delay_hours == 24

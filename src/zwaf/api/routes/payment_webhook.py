@@ -193,6 +193,24 @@ async def receive_payment_webhook(
                     extra={"tenant_id": tenant_id, "phone_tail": lead_phone[-4:]},
                 )
                 _emit_payment_confirmed(tenant_id, lead_phone, amount_cents)
+
+                # Stop any pending commercial follow-ups for a lead who paid —
+                # never message someone post-purchase (story-065 CRITICAL-2).
+                # Best-effort: a missing table must not break payment persistence.
+                try:
+                    await conn.execute(
+                        """
+                        UPDATE commercial_followups
+                        SET status = 'converted', updated_at = NOW()
+                        WHERE tenant_id = $1
+                          AND lead_phone = $2
+                          AND status IN ('pending', 'sending')
+                        """,
+                        tenant_id,
+                        lead_phone,
+                    )
+                except Exception as fe:
+                    logger.warning("commercial_followup convert skipped: %s", fe)
         finally:
             await conn.close()
     except Exception as e:

@@ -143,10 +143,21 @@ def build_followup_plan(
     stage: FollowupStage | str,
     contacts_already_sent: int = 0,
     dry_or_resistant: bool = False,
+    temperature_override: LeadTemperature | str | None = None,
 ) -> FollowupPlan:
-    """Return the allowed commercial follow-up plan without sending anything."""
+    """Return the allowed commercial follow-up plan without sending anything.
+
+    ``temperature_override`` lets a caller (e.g. the commercial follow-up engine)
+    pass the lead temperature persisted at enrollment instead of re-deriving it
+    from message text. This is the single source of truth for cadence/limits and
+    avoids the fragile round-trip through synthetic messages (story-065 HIGH-4).
+    """
     stage_enum = FollowupStage(stage)
-    temperature = classify_lead_temperature(messages).temperature
+    temperature = (
+        LeadTemperature(temperature_override)
+        if temperature_override is not None
+        else classify_lead_temperature(messages).temperature
+    )
     normalized = _normalize(" ".join(messages) if isinstance(messages, list) else messages)
 
     if is_opt_out_message(normalized):

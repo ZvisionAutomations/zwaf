@@ -9,7 +9,11 @@ CREATE TABLE IF NOT EXISTS commercial_followups (
     stage TEXT NOT NULL,
     temperature TEXT NOT NULL DEFAULT 'warm',
     contacts_sent INT NOT NULL DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'pending',
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN (
+            'pending', 'sending', 'replied', 'converted',
+            'limit_reached', 'opted_out', 'medical_risk', 'error'
+        )),
     next_send_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

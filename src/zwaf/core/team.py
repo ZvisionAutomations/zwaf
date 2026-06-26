@@ -16,6 +16,11 @@ from typing import Any, Callable, Optional
 
 from zwaf.conversion.checkout_flow import advance_checkout, build_transition_message
 from zwaf.conversion.checkout_policy import is_opt_out_message
+from zwaf.conversion.commercial_followup import (
+    enroll_lead_for_followup,
+    mark_followup_replied,
+)
+from zwaf.conversion.followup import FollowupStage
 from zwaf.conversion.funnel_events import FunnelEventName, build_funnel_event
 from zwaf.conversion.intelligence import BuyingIntent, ConversionAction, LeadSignal, analyze_message
 from zwaf.conversion.self_improvement import ImprovementKind, ImprovementQueue
@@ -267,6 +272,15 @@ class ZWAFTeam:
                 route_result=RouteResult("guard", 1.0),
             )
 
+        # A lead who sends ANY message is re-engaged — cancel pending commercial
+        # follow-ups so we never message someone who already replied or bought
+        # (story-065 CRITICAL-2). Best-effort: never block the response on this.
+        if self._db_url:
+            try:
+                await mark_followup_replied(self._db_url, self._tenant.tenant_id, phone)
+            except Exception:
+                pass
+
         if is_opt_out_message(guard_result.sanitized_input):
             await mark_opt_out(
                 phone=phone,
@@ -373,6 +387,27 @@ class ZWAFTeam:
             BuyingIntent.HIGH,
         ):
             _emit_event(FunnelEventName.OFFER_PRESENTED, phone, self._tenant.tenant_id)
+            # Enroll the lead in the commercial follow-up pipeline at the moment
+            # they see the offer — this is the runtime trigger the engine needs;
+            # without it commercial_followups stays empty (story-065 CRITICAL-1).
+            # Idempotent (ON CONFLICT DO NOTHING); the mark_followup_replied call
+            # above cancels it the instant the lead re-engages.
+            if self._db_url:
+                temperature = (
+                    "hot"
+                    if conversion_signal.buying_intent is BuyingIntent.HIGH
+                    else "warm"
+                )
+                try:
+                    await enroll_lead_for_followup(
+                        self._db_url,
+                        self._tenant.tenant_id,
+                        phone,
+                        FollowupStage.POST_OFFER.value,
+                        temperature=temperature,
+                    )
+                except Exception:
+                    pass
 
         # 3. Execute agent — monta a memoria do lead (story-044), so com a flag ON.
         lead_memory_block = await self._build_lead_memory_block(session_id, phone)

@@ -11,26 +11,16 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from zwaf.conversion.followup import (
-    FollowupStage,
-    build_followup_plan,
-    HOT_DELAY_HOURS,
-)
+import asyncpg
+
+from zwaf.conversion.followup import FollowupStage, build_followup_plan
 from zwaf.conversion.pix_reengagement import is_opted_out
 
 logger = logging.getLogger("zwaf.conversion.commercial_followup")
 
-
-def _synthetic_messages_for_temperature(temperature: str) -> list[str]:
-    """Return synthetic messages that produce the desired lead temperature classification."""
-    if temperature == "hot":
-        return ["quero comprar", "qual o preco", "manda o link"]
-    if temperature == "warm":
-        return ["quero saber mais"]
-    if temperature == "cold":
-        return ["ola"]
-    # RISK or unknown -- return empty; build_followup_plan will handle
-    return []
+# Backoff applied when a send fails so the row is retried on the next hourly
+# run instead of being orphaned with a NULL next_send_at (story-065 MEDIUM-2).
+_SEND_RETRY_BACKOFF_HOURS = 1
 
 
 async def enroll_lead_for_followup(
@@ -48,8 +38,6 @@ async def enroll_lead_for_followup(
     if not db_url or not lead_phone:
         return False
     try:
-        import asyncpg
-
         conn = await asyncpg.connect(db_url)
         try:
             result = await conn.execute(
@@ -83,8 +71,6 @@ async def get_due_followups(db_url: str, tenant_id: str) -> list[dict]:
     if not db_url:
         return []
     try:
-        import asyncpg
-
         conn = await asyncpg.connect(db_url)
         try:
             rows = await conn.fetch(
@@ -118,8 +104,6 @@ async def update_followup_state(
     if not db_url or not followup_id:
         return
     try:
-        import asyncpg
-
         conn = await asyncpg.connect(db_url)
         try:
             await conn.execute(
@@ -147,8 +131,6 @@ async def mark_followup_replied(db_url: str, tenant_id: str, lead_phone: str) ->
     if not db_url or not lead_phone:
         return
     try:
-        import asyncpg
-
         conn = await asyncpg.connect(db_url)
         try:
             await conn.execute(
@@ -200,8 +182,6 @@ async def run_commercial_followup_job(
 
         # Optimistic lock: try to claim 'sending' before doing any I/O
         try:
-            import asyncpg
-
             conn = await asyncpg.connect(db_url)
             try:
                 claimed_id = await conn.fetchval(
@@ -236,8 +216,9 @@ async def run_commercial_followup_job(
             )
             continue
 
-        # Build followup plan using synthetic messages matching the lead temperature
-        messages = _synthetic_messages_for_temperature(temperature)
+        # Build the plan from the temperature persisted at enrollment — the plan
+        # is the single source of truth for cadence/limits (story-065 HIGH-4).
+        # No synthetic message text is fabricated to coax a classification.
         try:
             stage_enum = FollowupStage(stage)
         except ValueError:
@@ -253,16 +234,19 @@ async def run_commercial_followup_job(
             continue
 
         plan = build_followup_plan(
-            messages=messages,
+            messages=[],
             stage=stage_enum,
             contacts_already_sent=contacts_sent,
+            temperature_override=temperature,
         )
 
         if not plan.allowed:
+            # Normalize the plan's opt-out reason to the engine's terminal status.
+            terminal = "opted_out" if plan.reason == "opt_out" else plan.reason
             await update_followup_state(
                 db_url,
                 followup_id,
-                status=plan.reason,
+                status=terminal,
                 contacts_sent=contacts_sent,
             )
             continue
@@ -281,17 +265,23 @@ async def run_commercial_followup_job(
             await whatsapp_tool(phone=lead_phone, message=next_contact.text)
 
             new_sent = contacts_sent + 1
-            next_delay = HOT_DELAY_HOURS[new_sent] if new_sent < len(HOT_DELAY_HOURS) else None
-            new_status = (
-                "pending"
-                if (new_sent < plan.max_contacts and next_delay is not None)
-                else "limit_reached"
+            # Ask the plan for the FOLLOWING contact to learn its delay and whether
+            # more are allowed — keeps the plan as the single source of truth and
+            # respects per-temperature limits (story-065 HIGH-3).
+            next_plan = build_followup_plan(
+                messages=[],
+                stage=stage_enum,
+                contacts_already_sent=new_sent,
+                temperature_override=temperature,
             )
-            next_send = (
-                datetime.now(timezone.utc) + timedelta(hours=next_delay)
-                if (next_delay is not None and new_status == "pending")
-                else None
-            )
+            if next_plan.allowed and next_plan.contacts:
+                new_status = "pending"
+                next_send = datetime.now(timezone.utc) + timedelta(
+                    hours=next_plan.contacts[0].delay_hours
+                )
+            else:
+                new_status = "limit_reached"
+                next_send = None
 
             await update_followup_state(
                 db_url,
@@ -314,12 +304,16 @@ async def run_commercial_followup_job(
                 lead_phone[:4] + "****",
                 exc,
             )
-            # Revert to pending so it retries next hour
+            # Revert to pending WITH a backoff so the row is retried on the next
+            # hourly run instead of being orphaned with a NULL next_send_at, which
+            # the due-query (next_send_at <= NOW()) would never select (MEDIUM-2).
             await update_followup_state(
                 db_url,
                 followup_id,
                 status="pending",
                 contacts_sent=contacts_sent,
+                next_send_at=datetime.now(timezone.utc)
+                + timedelta(hours=_SEND_RETRY_BACKOFF_HOURS),
             )
 
     return sent
