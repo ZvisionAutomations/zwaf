@@ -12,13 +12,14 @@ import os
 from datetime import date, timedelta
 from typing import Any, Optional
 
+from zwaf.db.dsn import normalize_dsn
 from zwaf.security.pii import decrypt_pii
 
 logger = logging.getLogger("zwaf.conversion.pix_reengagement")
 
 
 def _db_url() -> str:
-    return (os.getenv("DATABASE_URL") or "").replace("+asyncpg", "")
+    return normalize_dsn(os.getenv("DATABASE_URL"))
 
 
 async def get_pending_pix_orders(

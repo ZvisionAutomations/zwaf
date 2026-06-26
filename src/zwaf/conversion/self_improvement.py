@@ -10,6 +10,8 @@ from enum import Enum
 from typing import Any
 from uuid import uuid4
 
+from zwaf.db.dsn import normalize_dsn
+
 logger = logging.getLogger("zwaf.conversion.self_improvement")
 
 
@@ -62,7 +64,7 @@ class ImprovementQueue:
     """Review queue with optional DB persistence and in-memory fallback."""
 
     def __init__(self, db_url: str | None = None, tenant_id: str = "") -> None:
-        self._db_url = db_url.replace("+asyncpg", "") if db_url else None
+        self._db_url = normalize_dsn(db_url) if db_url else None
         self._tenant_id = tenant_id
         self._candidates: dict[str, ImprovementCandidate] = {}
         self._review_log: list[ReviewLogEntry] = []

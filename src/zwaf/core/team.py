@@ -31,6 +31,7 @@ from zwaf.conversion.self_improvement import ImprovementKind, ImprovementQueue
 from zwaf.observability import langfuse as _obs
 from zwaf.core.router_agent import RouterAgent, RouteResult
 from zwaf.core.tenant import TenantConfig
+from zwaf.db.dsn import normalize_dsn
 from zwaf.memory.lead_memory import build_memory_block, maybe_update_lead_memory
 from zwaf.memory.lead_store import append_conversion_event, mark_opt_out
 from zwaf.memory.session import (
@@ -1456,7 +1457,7 @@ def _make_purchase_history_fn(db_url: str, tenant_id: str) -> Callable[[str], bo
     async def _async_check(phone: str) -> bool:
         if not db_url:
             return False
-        clean_url = db_url.replace("+asyncpg", "")
+        clean_url = normalize_dsn(db_url)
         try:
             import asyncpg
             conn = await asyncpg.connect(clean_url)

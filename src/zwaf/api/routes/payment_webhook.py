@@ -14,6 +14,8 @@ import os
 from typing import Any, Optional
 
 import asyncpg
+
+from zwaf.db.dsn import normalize_dsn
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from zwaf.memory.inventory_store import (
@@ -112,7 +114,7 @@ async def receive_payment_webhook(
         },
     )
 
-    db_url = os.getenv("DATABASE_URL", "").replace("+asyncpg", "")
+    db_url = normalize_dsn(os.getenv("DATABASE_URL", ""))
     if not db_url:
         logger.warning("DATABASE_URL not set - payment event not persisted")
         return {"status": "accepted_no_db"}

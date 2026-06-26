@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from zwaf.db.dsn import normalize_dsn
+
 logger = logging.getLogger("zwaf.memory.lead_attribution")
 
 
@@ -132,4 +134,4 @@ def _inserted(command_status: str) -> bool:
 
 
 def _db_url() -> str:
-    return (os.getenv("DATABASE_URL") or "").replace("+asyncpg", "")
+    return normalize_dsn(os.getenv("DATABASE_URL"))

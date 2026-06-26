@@ -6,11 +6,13 @@ import os
 
 from fastapi import APIRouter
 
+from zwaf.db.dsn import normalize_dsn
+
 router = APIRouter()
 logger = logging.getLogger("zwaf.api.ab_test")
 
 _DB_URL_RAW = os.getenv("DATABASE_URL", "")
-_DB_URL = _DB_URL_RAW.replace("+asyncpg", "") if _DB_URL_RAW else ""
+_DB_URL = normalize_dsn(_DB_URL_RAW)
 
 
 @router.get("/ab-test/{test_name}")

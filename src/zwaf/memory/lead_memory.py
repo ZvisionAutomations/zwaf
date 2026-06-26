@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 from zwaf.memory.lead_store import get_lead_memory, upsert_lead_memory
 from zwaf.memory.session import bump_summary_counter, reset_summary_counter
+from zwaf.db.dsn import normalize_dsn
 
 logger = logging.getLogger("zwaf.memory.lead_memory")
 
@@ -28,7 +29,7 @@ _DEFAULT_MAX_CHARS = 1000
 
 
 def _db_url() -> str:
-    return (os.getenv("DATABASE_URL") or "").replace("+asyncpg", "")
+    return normalize_dsn(os.getenv("DATABASE_URL"))
 
 
 async def _fetch_signals(phone: str, tenant_id: str) -> dict[str, Any]:

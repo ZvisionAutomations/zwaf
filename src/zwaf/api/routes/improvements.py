@@ -9,11 +9,13 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from zwaf.db.dsn import normalize_dsn
+
 router = APIRouter()
 logger = logging.getLogger("zwaf.api.improvements")
 
 _DB_URL_RAW = os.getenv("DATABASE_URL", "")
-_DB_URL = _DB_URL_RAW.replace("+asyncpg", "") if _DB_URL_RAW else ""
+_DB_URL = normalize_dsn(_DB_URL_RAW)
 
 _VALID_TRANSITIONS = {
     "suggested": {"approved", "rejected"},

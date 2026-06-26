@@ -15,6 +15,7 @@ from agno.agent import Agent
 
 from zwaf.core.base_agent import build_agent
 from zwaf.core.tenant import TenantConfig
+from zwaf.db.dsn import normalize_dsn
 from zwaf.tools.whatsapp import WhatsAppTool
 
 logger = logging.getLogger("zwaf.agents.fidelizacao")
@@ -121,7 +122,7 @@ class FidelizacaoScheduler:
             logger.warning("DATABASE_URL not set — fidelizacao skipped")
             return
 
-        clean_url = self._db_url.replace("+asyncpg", "")
+        clean_url = normalize_dsn(self._db_url)
         try:
             import asyncpg
             conn = await asyncpg.connect(clean_url)
@@ -204,7 +205,7 @@ class FidelizacaoScheduler:
     async def _mark_followup_sent(self, phone: str, product_id: str, kind: str) -> None:
         if not self._db_url:
             return
-        clean_url = self._db_url.replace("+asyncpg", "")
+        clean_url = normalize_dsn(self._db_url)
         try:
             import asyncpg
             conn = await asyncpg.connect(clean_url)

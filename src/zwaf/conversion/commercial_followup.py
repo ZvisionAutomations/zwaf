@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 from zwaf.conversion.followup import FollowupContact, FollowupPlan, FollowupStage, build_followup_plan
 from zwaf.conversion.funnel_events import FunnelEventName, build_funnel_event
+from zwaf.db.dsn import normalize_dsn
 from zwaf.observability import langfuse as _obs
 
 logger = logging.getLogger("zwaf.conversion.commercial_followup")
@@ -33,18 +34,13 @@ class FollowupCandidate:
     dry_or_resistant: bool = False
 
 
-def _normalize_dsn(db_url: str) -> str:
-    """asyncpg rejeita o dialeto SQLAlchemy (``postgresql+asyncpg://``).
-
-    O ``DATABASE_URL`` do tenant esta no formato SQLAlchemy (necessario para o
-    Agno/SQLAlchemy em ``build_team``), mas este modulo conecta com asyncpg
-    direto. Normaliza removendo o sufixo ``+asyncpg`` antes de cada conexao.
-    """
-    return (db_url or "").replace("+asyncpg", "")
+# DSN normalization centralized in zwaf.db.dsn (story-082). Alias kept so the
+# ~10 asyncpg.connect call-sites below stay unchanged.
+_normalize_dsn = normalize_dsn
 
 
 def _db_url() -> str:
-    return _normalize_dsn(os.getenv("DATABASE_URL") or "")
+    return normalize_dsn(os.getenv("DATABASE_URL") or "")
 
 
 async def run_commercial_followup_job(

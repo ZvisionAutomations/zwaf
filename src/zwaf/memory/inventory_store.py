@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from zwaf.db.dsn import normalize_dsn
+
 logger = logging.getLogger("zwaf.memory.inventory_store")
 
 DEFAULT_TTL_MINUTES = 30
@@ -45,7 +47,7 @@ class ReservationResult:
 
 
 def _db_url() -> str:
-    return (os.getenv("DATABASE_URL") or "").replace("+asyncpg", "")
+    return normalize_dsn(os.getenv("DATABASE_URL"))
 
 
 def _affected(command_status: str) -> int:

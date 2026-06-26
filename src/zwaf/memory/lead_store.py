@@ -7,6 +7,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from zwaf.db.dsn import normalize_dsn
 from zwaf.security.pii import can_encrypt_pii, decrypt_pii, encrypt_pii
 
 logger = logging.getLogger("zwaf.memory.lead_store")
@@ -27,7 +28,7 @@ _DB_URL: Optional[str] = None
 
 
 def _db_url() -> str:
-    return (_DB_URL or os.getenv("DATABASE_URL") or "").replace("+asyncpg", "")
+    return normalize_dsn(_DB_URL or os.getenv("DATABASE_URL"))
 
 
 def configure(db_url: str) -> None:
