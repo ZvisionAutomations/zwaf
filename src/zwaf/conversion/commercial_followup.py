@@ -5,11 +5,14 @@ state in ``commercial_followups`` so process restarts do not duplicate sends.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import random
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from zwaf.conversion.followup import FollowupContact, FollowupPlan, FollowupStage, build_followup_plan
@@ -23,6 +26,83 @@ BRT = ZoneInfo("America/Sao_Paulo")
 COMMERCIAL_START_HOUR = 8
 COMMERCIAL_END_HOUR = 18
 DEFAULT_LOOKBACK_DAYS = 30
+
+# story-083 — intelligent follow-up safety envelope. All operator-tunable via env
+# (no code change needed). Conservative defaults; the engine is OFF unless the
+# scheduler is registered (COMMERCIAL_FOLLOWUP_ENABLED kill-switch in main.py).
+DEFAULT_WINDOW_HOURS = 48          # cold-start: only events within this window enroll
+DEFAULT_ROUND_CAP = 3              # hard cap of sends per scheduler round (regardless of queue)
+MAX_ROUND_CAP = 10                 # operator may raise the cap up to this ceiling
+DEFAULT_MAX_TOUCHES = 3            # decision-6: at most 3 nudges per lead, then stop (policy allows up to 5)
+HARD_MAX_TOUCHES = 5
+JITTER_MIN_SECONDS = 3.0           # human-like pacing between sends in a round
+JITTER_MAX_SECONDS = 8.0
+DEFAULT_ENABLED_SEGMENTS = ("checkout_incomplete", "post_link")  # POST_OFFER/REPURCHASE OFF
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() == "true"
+
+
+def _enabled_segments() -> set[str]:
+    raw = os.getenv("COMMERCIAL_FOLLOWUP_SEGMENTS", "").strip()
+    if not raw:
+        return set(DEFAULT_ENABLED_SEGMENTS)
+    return {s.strip().lower() for s in raw.split(",") if s.strip()}
+
+
+def _round_cap() -> int:
+    try:
+        cap = int(os.getenv("COMMERCIAL_FOLLOWUP_CAP", str(DEFAULT_ROUND_CAP)))
+    except (TypeError, ValueError):
+        cap = DEFAULT_ROUND_CAP
+    return max(1, min(cap, MAX_ROUND_CAP))
+
+
+def _max_touches() -> int:
+    try:
+        n = int(os.getenv("COMMERCIAL_FOLLOWUP_MAX_TOUCHES", str(DEFAULT_MAX_TOUCHES)))
+    except (TypeError, ValueError):
+        n = DEFAULT_MAX_TOUCHES
+    return max(1, min(n, HARD_MAX_TOUCHES))
+
+
+def _window_hours() -> int:
+    try:
+        hours = int(os.getenv("COMMERCIAL_FOLLOWUP_WINDOW_HOURS", str(DEFAULT_WINDOW_HOURS)))
+    except (TypeError, ValueError):
+        hours = DEFAULT_WINDOW_HOURS
+    return max(1, hours)
+
+
+def _is_dry_run() -> bool:
+    return _env_flag("COMMERCIAL_FOLLOWUP_DRY_RUN")
+
+
+def _activation_floor(now: datetime) -> datetime:
+    """Cold-start guard: never enroll an event older than this floor.
+
+    floor = max(COMMERCIAL_FOLLOWUP_ACTIVATED_AT, now - window_hours). The activation
+    marker guarantees the historical base never enters when the engine is (re)enabled.
+    """
+    now_utc = _as_utc(now)
+    window_floor = now_utc - timedelta(hours=_window_hours())
+    raw = os.getenv("COMMERCIAL_FOLLOWUP_ACTIVATED_AT", "").strip()
+    if raw:
+        try:
+            activated = _as_utc(datetime.fromisoformat(raw.replace("Z", "+00:00")))
+            return max(window_floor, activated)
+        except ValueError:
+            logger.warning("invalid COMMERCIAL_FOLLOWUP_ACTIVATED_AT=%r, using window floor", raw)
+    return window_floor
+
+
+def _jitter_seconds() -> float:
+    return random.uniform(JITTER_MIN_SECONDS, JITTER_MAX_SECONDS)
+
+
+def _mask_phone(phone: str) -> str:
+    return f"***{phone[-4:]}" if len(phone) >= 4 else "***"
 
 
 @dataclass(frozen=True)
@@ -51,8 +131,13 @@ async def run_commercial_followup_job(
     now: Optional[datetime] = None,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     limit: int = 50,
+    sleeper: Optional[Callable[[float], Awaitable[None]]] = None,
 ) -> int:
-    """Schedule and send due commercial follow-ups. Returns successful sends."""
+    """Schedule and send due commercial follow-ups. Returns successful sends.
+
+    Safety envelope (story-083): per-round hard cap, jitter between sends, segment
+    allow-list, dry-run mode, and paid-order/opt-out guards before every send.
+    """
     if not db_url or not whatsapp_tool:
         return 0
 
@@ -64,21 +149,55 @@ async def run_commercial_followup_job(
         lookback_days=lookback_days,
     )
 
-    due = await claim_due_followups(db_url, tenant_id, now=now_utc, limit=limit)
+    cap = _round_cap()
+    claim_limit = min(limit, cap)
+    enabled = _enabled_segments()
+
+    # Dry-run: preview what WOULD be sent without claiming/sending anything.
+    if _is_dry_run():
+        preview = await preview_due_followups(db_url, tenant_id, now=now_utc, limit=claim_limit)
+        for row in preview:
+            stage = str(row.get("stage") or "")
+            if stage not in enabled:
+                continue
+            logger.info(
+                "[DRY-RUN] would send followup tenant=%s phone=%s stage=%s contacts_sent=%s",
+                tenant_id, _mask_phone(str(row.get("phone") or "")), stage, row.get("contacts_sent"),
+            )
+        logger.info("[DRY-RUN] commercial_followup tenant=%s previewed=%d cap=%d", tenant_id, len(preview), cap)
+        return 0
+
+    due = await claim_due_followups(db_url, tenant_id, now=now_utc, limit=claim_limit)
+    sleep = sleeper or asyncio.sleep
     sent = 0
-    for row in due:
+    for index, row in enumerate(due):
         phone = str(row.get("phone") or "")
         if not phone:
             await mark_followup_blocked(db_url, str(row.get("id") or ""), "missing_phone")
+            continue
+
+        stage = str(row.get("stage") or FollowupStage.POST_OFFER.value)
+        if stage not in enabled:
+            await mark_followup_blocked(db_url, str(row.get("id") or ""), "segment_disabled")
+            continue
+
+        # decision-6 defensive cap: never exceed _max_touches() nudges per lead.
+        if int(row.get("contacts_sent") or 0) >= _max_touches():
+            await mark_followup_blocked(db_url, str(row.get("id") or ""), "max_touches")
             continue
 
         if await is_followup_opted_out(db_url, tenant_id, phone):
             await mark_followup_blocked(db_url, str(row.get("id") or ""), "opt_out")
             continue
 
+        # Payment cancels the sequence: never nudge a lead who already paid.
+        if await _has_paid_order(db_url, tenant_id, phone):
+            await mark_followup_blocked(db_url, str(row.get("id") or ""), "already_paid")
+            continue
+
         plan = build_followup_plan(
             messages=str(row.get("context_messages") or ""),
-            stage=str(row.get("stage") or FollowupStage.POST_OFFER.value),
+            stage=stage,
             contacts_already_sent=int(row.get("contacts_sent") or 0),
         )
         if not plan.allowed or not plan.contacts:
@@ -86,11 +205,16 @@ async def run_commercial_followup_job(
             continue
 
         contact = plan.contacts[0]
+        lead_name = await _fetch_lead_name(db_url, tenant_id, phone)
+        text = _personalize(contact.text, lead_name)
         try:
+            # Human-like pacing: jitter before each send after the first.
+            if sent > 0:
+                await sleep(_jitter_seconds())
             ok = await _send_whatsapp(
                 whatsapp_tool,
                 phone=phone,
-                text=contact.text,
+                text=text,
                 session_id=f"followup:{tenant_id}:{phone}",
             )
             if not ok:
@@ -131,13 +255,20 @@ async def schedule_commercial_followups(
     """Create or refresh scheduled commercial follow-up states."""
     if not db_url:
         return 0
+    now_utc = _as_utc(now or datetime.now(timezone.utc))
+    since = _activation_floor(now_utc)
+    enabled = _enabled_segments()
     candidates = await get_followup_candidates(
         db_url,
         tenant_id,
-        lookback_days=lookback_days,
+        since=since,
     )
     scheduled = 0
     for candidate in candidates:
+        # Segment allow-list: only enrol enabled stages (POST_OFFER/REPURCHASE OFF by default).
+        if candidate.stage.value not in enabled:
+            continue
+
         if await is_followup_opted_out(db_url, tenant_id, candidate.phone):
             await upsert_blocked_followup(db_url, tenant_id, candidate, "opt_out")
             continue
@@ -153,7 +284,11 @@ async def schedule_commercial_followups(
             continue
 
         first = plan.contacts[0]
-        next_send_at = _next_business_time(candidate.last_activity_at + timedelta(hours=first.delay_hours))
+        # Send-time floor: never schedule in the past. If the ideal time
+        # (last_activity + delay) already passed, send from now on (subject to
+        # the per-round cap), never as an instant backlog flood.
+        scheduled_at = candidate.last_activity_at + timedelta(hours=first.delay_hours)
+        next_send_at = _next_business_time(max(scheduled_at, now_utc))
         await upsert_scheduled_followup(
             db_url,
             tenant_id,
@@ -179,11 +314,19 @@ async def get_followup_candidates(
     db_url: str,
     tenant_id: str,
     *,
+    since: Optional[datetime] = None,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
 ) -> list[FollowupCandidate]:
-    """Return synthetic, PII-minimized candidates from persisted commercial signals."""
+    """Return synthetic, PII-minimized candidates from persisted commercial signals.
+
+    Only events at/after ``since`` (the cold-start activation floor) are considered,
+    so the historical base never enters when the engine is (re)enabled.
+    """
     if not db_url:
         return []
+    if since is None:
+        since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+    since = _as_utc(since)
     try:
         import asyncpg
 
@@ -201,7 +344,7 @@ async def get_followup_candidates(
                         STRING_AGG(DISTINCT COALESCE(ce.raw_signal->>'objection', ''), ' ') AS objections
                     FROM conversion_events ce
                     WHERE ce.tenant_id = $1
-                      AND ce.created_at >= NOW() - ($2::int * INTERVAL '1 day')
+                      AND ce.created_at >= $2
                     GROUP BY ce.lead_phone
                 )
                 SELECT
@@ -227,9 +370,10 @@ async def get_followup_candidates(
                     LIMIT 1
                 ) o ON TRUE
                 ORDER BY c.last_activity_at DESC
+                LIMIT 500
                 """,
                 tenant_id,
-                int(lookback_days),
+                since,
             )
         finally:
             await conn.close()
@@ -435,6 +579,9 @@ async def mark_followup_sent(
         contacts_already_sent=new_count,
     )
     next_send_at = _next_send_after_success(contact, next_plan, _as_utc(sent_at))
+    # decision-6: cap at most _max_touches() nudges per lead, then stop for good.
+    if new_count >= _max_touches():
+        next_send_at = None
     status = "scheduled" if next_send_at else "completed"
 
     conn = await asyncpg.connect(_normalize_dsn(db_url))
@@ -532,6 +679,8 @@ async def mark_followup_replied(
                 """
                 UPDATE commercial_followups
                 SET last_replied_at = $3,
+                    status = 'completed',
+                    next_send_at = NULL,
                     updated_at = NOW()
                 WHERE tenant_id = $1
                   AND phone = $2
@@ -562,6 +711,153 @@ async def mark_followup_replied(
     except Exception as exc:
         logger.warning("mark_followup_replied failed tenant=%s: %s", tenant_id, exc)
         return False
+
+
+async def preview_due_followups(
+    db_url: str,
+    tenant_id: str,
+    *,
+    now: datetime,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Read-only view of due rows for DRY-RUN — does NOT claim or mutate anything."""
+    if not db_url:
+        return []
+    try:
+        import asyncpg
+
+        conn = await asyncpg.connect(_normalize_dsn(db_url))
+        try:
+            rows = await conn.fetch(
+                """
+                SELECT id, phone, stage, contacts_sent, next_send_at
+                FROM commercial_followups
+                WHERE tenant_id = $1
+                  AND status = 'scheduled'
+                  AND next_send_at IS NOT NULL
+                  AND next_send_at <= $2
+                ORDER BY next_send_at ASC
+                LIMIT $3
+                """,
+                tenant_id,
+                _as_utc(now),
+                int(limit),
+            )
+        finally:
+            await conn.close()
+        return [dict(row) for row in rows]
+    except Exception as exc:
+        logger.error("preview_due_followups failed tenant=%s: %s", tenant_id, exc)
+        return []
+
+
+async def _has_paid_order(db_url: str, tenant_id: str, phone: str) -> bool:
+    """True if the lead already has a paid order — payment cancels the follow-up."""
+    if not db_url or not phone:
+        return False
+    try:
+        import asyncpg
+
+        conn = await asyncpg.connect(_normalize_dsn(db_url))
+        try:
+            value = await conn.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM orders
+                    WHERE tenant_id = $1 AND lead_phone = $2 AND status = 'paid'
+                )
+                """,
+                tenant_id,
+                phone,
+            )
+        finally:
+            await conn.close()
+        return bool(value)
+    except Exception as exc:
+        logger.warning("_has_paid_order check failed tenant=%s: %s", tenant_id, exc)
+        return False
+
+
+async def _fetch_lead_name(db_url: str, tenant_id: str, phone: str) -> str:
+    """Best-effort plaintext first name from leads.name (NOT the encrypted symptom)."""
+    if not db_url or not phone:
+        return ""
+    try:
+        import asyncpg
+
+        conn = await asyncpg.connect(_normalize_dsn(db_url))
+        try:
+            value = await conn.fetchval(
+                "SELECT name FROM leads WHERE tenant_id = $1 AND phone = $2",
+                tenant_id,
+                phone,
+            )
+        finally:
+            await conn.close()
+        return str(value or "")
+    except Exception as exc:
+        logger.warning("_fetch_lead_name failed tenant=%s: %s", tenant_id, exc)
+        return ""
+
+
+_NAME_SAFE_RE = re.compile(r"^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'\-]{1,30}$")
+
+
+def _personalize(text: str, name: str) -> str:
+    """Prepend a safe first-name greeting when a clean plaintext name is known.
+
+    Never echoes the encrypted symptom/pain. Falls back to the bare template when
+    no usable name is available (so the message is always sendable).
+    """
+    if not name:
+        return text
+    first = name.strip().split()[0] if name.strip() else ""
+    # Capitalize and validate: avoid injecting junk/PII-looking tokens.
+    first = first.capitalize()
+    if not _NAME_SAFE_RE.match(first):
+        return text
+    return f"Oi {first}! {text}"
+
+
+async def followup_daily_stats(db_url: str, tenant_id: str) -> dict[str, int]:
+    """Aggregate follow-up activity in the last 24h for the daily report (AC-9)."""
+    empty = {"sent": 0, "replied": 0, "opted_out": 0, "cap": _round_cap()}
+    if not db_url:
+        return empty
+    try:
+        import asyncpg
+
+        conn = await asyncpg.connect(_normalize_dsn(db_url))
+        try:
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE last_sent_at >= NOW() - INTERVAL '24 hours'
+                    ) AS sent,
+                    COUNT(*) FILTER (
+                        WHERE last_replied_at >= NOW() - INTERVAL '24 hours'
+                    ) AS replied,
+                    COUNT(*) FILTER (
+                        WHERE block_reason = 'opt_out'
+                          AND updated_at >= NOW() - INTERVAL '24 hours'
+                    ) AS opted_out
+                FROM commercial_followups
+                WHERE tenant_id = $1
+                """,
+                tenant_id,
+            )
+        finally:
+            await conn.close()
+        return {
+            "sent": int(row["sent"] or 0),
+            "replied": int(row["replied"] or 0),
+            "opted_out": int(row["opted_out"] or 0),
+            "cap": _round_cap(),
+        }
+    except Exception as exc:
+        logger.warning("followup_daily_stats failed tenant=%s: %s", tenant_id, exc)
+        return empty
 
 
 def _candidate_from_row(row: dict[str, Any]) -> FollowupCandidate:

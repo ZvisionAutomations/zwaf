@@ -43,6 +43,8 @@
     "boleto_due_days": 1,
     "_card_callback_note": "Ligar card_callback_enabled SO depois de cadastrar um dominio/site em Minha Conta > Informacoes no Asaas. Sem dominio, o callback.successUrl causa HTTP 400 e quebra o cartao.",
     "card_callback_enabled": false,
+    "_max_installments_note": "story-084. Parcelamento no checkout de cartao: 1 = so a vista (default seguro). Subir para >=2 (ex. 12) SO depois do smoke sandbox verde + Fernando confirmar no painel Asaas parcelamento habilitado, max parcelas e modelo de juros (loja absorve vs cliente paga). A conta Asaas controla juros/valor minimo de parcela.",
+    "max_installments": 1,
     "products": {
       "new-woman": {
         "product_id": "nw-001",

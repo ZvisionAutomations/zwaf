@@ -82,6 +82,10 @@ def load_payment_config(tenant_id: str) -> dict:
         "billing_type": payment.get("billing_type", "PIX"),
         "due_days": payment.get("due_days", 2),
         "products": payment.get("products", {}),
+        # story-084: preserva max_installments p/ o smoke validar parcelamento no
+        # checkout de cartao. completion_url/return_url continuam vindo do env
+        # (ASAAS_COMPLETION_URL/ASAAS_RETURN_URL) via _config_value no payment.py.
+        "max_installments": payment.get("max_installments", 1),
     }
     _ok(f"Tenant carregado: {tenant_id}")
     return payment

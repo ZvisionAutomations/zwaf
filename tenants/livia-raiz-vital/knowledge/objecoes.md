@@ -52,6 +52,15 @@ Formato de cada card: **objeção → princípio → resposta-modelo → próxim
   uso contínuo, então muita gente já emenda o segundo — mas a gente vai no seu ritmo."
 - **Próximo passo:** fechamento A de 1 pote; registra para recompra. Sem empurrar mais potes.
 
+## 7. "Tá apertado esse mês / compro mês que vem / sem condição agora" (timing financeiro)
+- **Princípio:** remover a barreira de CAIXA, não o desejo — a cliente quer, mas o bolso aperta agora.
+- **Resposta-modelo:** "Te entendo. Pra não pesar tudo de uma vez, dá pra fechar no cartão e dividir
+  em parcelas — você já começa o tratamento hoje e o valor se distribui. Quer que eu te mande o link
+  pra fechar assim?"
+- **Próximo passo:** se aceitar → checkout no cartão (parcelado). Se não tiver cartão ou preferir
+  esperar → acolhe e registra follow-up na data, sem pressão. (story-084 — ativa quando o parcelamento
+  estiver ligado no checkout / `max_installments >= 2`.)
+
 ---
 
 ## Apoio — "Prefiro comprar no mercado/farmácia"
