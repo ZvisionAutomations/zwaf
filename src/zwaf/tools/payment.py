@@ -159,6 +159,7 @@ def make_payment_link_generator(
                             quantity=resolved_qty,
                             price_cents=price_cents,
                             callback=callback,
+                            max_installments=cfg.get("max_installments", 1),
                         ),
                     )
                     resp.raise_for_status()
@@ -172,7 +173,7 @@ def make_payment_link_generator(
                             asaas_payment_id=checkout_id,
                             payment_url=url,
                         )
-                        return _card_message(url, price_cents)
+                        return _card_message(url, price_cents, cfg.get("max_installments", 1))
                     logger.error("Asaas checkout response without id/link: %s", _redact(data))
                     await _release_failed_reservation(order_id)
                     return _MSG_GENERIC_ERROR
@@ -523,6 +524,7 @@ def _checkout_payload(
     quantity: int,
     price_cents: int,
     callback: dict[str, Any],
+    max_installments: int = 1,
 ) -> dict[str, Any]:
     item_quantity = max(1, int(quantity or 1))
     unit_value = round((price_cents / item_quantity) / 100, 2)
@@ -531,9 +533,14 @@ def _checkout_payload(
         or product_cfg.get("image_base64")
         or _TRANSPARENT_PNG_BASE64
     )
-    return {
+    # Parcelamento (story-084): por padrao so a vista (DETACHED). Se o tenant
+    # habilitar max_installments>=2, o checkout hospedado tambem oferece
+    # INSTALLMENT com teto de parcelas. Juros/valor minimo sao controlados na
+    # conta Asaas. Default 1 = comportamento anterior (sem parcelamento).
+    charge_types = ["DETACHED"]
+    payload: dict[str, Any] = {
         "billingTypes": ["CREDIT_CARD"],
-        "chargeTypes": ["DETACHED"],
+        "chargeTypes": charge_types,
         "minutesToExpire": int(product_cfg.get("checkout_minutes_to_expire", 60) or 60),
         "externalReference": f"{tenant_id}:{customer_phone}:{product_id}:{external_id}",
         "callback": callback,
@@ -548,6 +555,14 @@ def _checkout_payload(
             }
         ],
     }
+    try:
+        max_inst = int(max_installments or 1)
+    except (TypeError, ValueError):
+        max_inst = 1
+    if max_inst >= 2:
+        charge_types.append("INSTALLMENT")
+        payload["installment"] = {"maxInstallmentCount": max_inst}
+    return payload
 
 
 def _build_checkout_callback(payment_config: dict[str, Any]) -> Optional[dict[str, Any]]:
@@ -732,19 +747,29 @@ def _boleto_message(line_code: str, pdf_url: str, due_date_iso: str, price_cents
     )
 
 
-def _card_message(url: str, price_cents: int) -> str:
+def _card_message(url: str, price_cents: int, max_installments: int = 1) -> str:
     """Mensagem com o link de cartao para envio LITERAL no chat (story-042 FR-1).
 
-    O cliente paga a vista ou parcela na tela hospedada do Asaas (parcelamento e
-    juros ao cliente sao configurados na conta). O valor exibido e o a vista, ja
-    com o markup de cartao aplicado.
+    O cliente paga a vista na tela hospedada do Asaas; se o tenant habilitar
+    max_installments>=2 (story-084), tambem pode parcelar ate esse teto. So
+    promete parcelamento quando realmente habilitado (Art IV — No Invention).
+    O valor exibido e o a vista, ja com o markup de cartao aplicado.
     """
+    try:
+        max_inst = int(max_installments or 1)
+    except (TypeError, ValueError):
+        max_inst = 1
+    if max_inst >= 2:
+        titulo = "Pra pagar no cartao (a vista ou parcelado)"
+        linha_parc = f"No proprio link voce pode pagar a vista ou parcelar em ate {max_inst}x. "
+    else:
+        titulo = "Pra pagar no cartao"
+        linha_parc = ""
     return (
-        "Prontinho! Pra pagar no cartao (a vista ou parcelado), e so acessar o "
+        f"Prontinho! {titulo}, e so acessar o "
         f"link seguro abaixo ({_format_brl(price_cents)} a vista):\n\n"
         f"{url}\n\n"
-        "No proprio link voce escolhe o numero de parcelas. Assim que o pagamento "
-        "for aprovado, eu te confirmo por aqui."
+        f"{linha_parc}Assim que o pagamento for aprovado, eu te confirmo por aqui."
     )
 
 
